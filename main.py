@@ -18,9 +18,9 @@ from SentimentModel import SentimentModel
 from StressModel import StressModel
 
 # === 配置 ===
-TOTAL_QUESTIONS = 5  # 總問題數
+TOTAL_QUESTIONS = 3  # 總問題數
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-2.0-flash"
 
 # 配置 Gemini
 if GOOGLE_API_KEY:
@@ -104,13 +104,13 @@ def call_gemini(prompt: str, is_question: bool = False) -> str:
 
 def generate_question(question_number: int, previous_answers: List[str] = None) -> str:
     """動態生成投資理財相關問題"""
-    # 基礎問題提示詞，確保簡潔性
+    # 基礎問題提示詞，聚焦於投資心理和情緒
     base_prompts = [
-        "請生成一個關於投資經驗的簡短問題（15-25字），了解使用者的投資背景。",
-        "請生成一個關於風險態度的簡短問題（15-25字），了解使用者面對虧損的反應。",
-        "請生成一個關於投資目標的簡短問題（15-25字），了解使用者的投資目的。",
-        "請生成一個關於資金規劃的簡短問題（15-25字），了解使用者的可投資金額。",
-        "請生成一個關於投資偏好的簡短問題（15-25字），了解使用者喜歡的投資方式。"
+        "請生成一個關於投資時心理壓力的簡短問題（15-25字），了解使用者投資時的壓力感受。",
+        "請生成一個關於投資情緒波動的簡短問題（15-25字），了解使用者面對市場變化時的情緒反應。", 
+        "請生成一個關於投資焦慮的簡短問題（15-25字），了解使用者在投資過程中的擔憂和恐懼。",
+        "請生成一個關於投資決策心理的簡短問題（15-25字），了解使用者做投資決定時的心理狀態。",
+        "請生成一個關於投資壓力管理的簡短問題（15-25字），了解使用者如何處理投資帶來的心理負擔。"
     ]
     
     # 如果有前面的回答，加入上下文來生成更針對性的問題
@@ -132,21 +132,22 @@ def generate_question(question_number: int, previous_answers: List[str] = None) 
 4. 只回傳問題本身，不要其他說明
 """
         else:
-            # 超過基礎問題時，根據前面回答生成深度問題
+            # 超過基礎問題時，根據前面回答生成深度心理問題
             prompt = f"""
 基於使用者之前的回答：
 {context}
 
-請生成一個深入的投資心理問題（15-25字），幫助了解使用者的：
-- 投資決策模式
-- 情緒管理能力  
-- 對市場的看法
-- 風險認知程度
+請生成一個深入的投資心理問題（15-25字），專注了解使用者的：
+- 投資時的內心感受和情緒
+- 面對虧損時的心理反應
+- 投資壓力的來源和影響
+- 情緒如何影響投資決策
+- 投資焦慮和恐懼的具體表現
 
 要求：
 1. 問題長度15-25字
-2. 避免重複之前的內容
-3. 問題要實用且易回答
+2. 聚焦心理和情緒層面，不要問金額或策略
+3. 避免重複之前的內容
 4. 只回傳問題本身
 """
     else:
@@ -154,7 +155,7 @@ def generate_question(question_number: int, previous_answers: List[str] = None) 
         if question_number < len(base_prompts):
             prompt = base_prompts[question_number] + "\n要求：只回傳問題本身，長度15-25字。"
         else:
-            prompt = "請生成一個簡短的投資理財問題（15-25字），了解使用者的投資心理。只回傳問題本身。"
+            prompt = "請生成一個關於投資心理壓力或情緒的簡短問題（15-25字），了解使用者的投資心理狀態。只回傳問題本身。"
     
     return call_gemini(prompt, is_question=True)
 
@@ -291,9 +292,15 @@ def generate_final_advice(all_sentiment_scores: List[Dict[str, float]],
 4. 具體的行動方案
 
 請用繁體中文回答，內容要實用且易於執行。
+注意：請不要使用任何 Markdown 格式標記（如 ** 粗體標記），回答內容應該是純文字格式。
     """
     
-    return call_gemini(prompt, is_question=False)
+    advice_text = call_gemini(prompt, is_question=False)
+    
+    # 移除所有的 Markdown 格式標記
+    clean_advice = advice_text.replace("**", "").replace("*", "")
+    
+    return clean_advice
 
 # === API 端點 ===
 @app.get("/models")
