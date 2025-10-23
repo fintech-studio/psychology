@@ -194,7 +194,7 @@ curl "http://localhost:8000/models"
 
 ## 部署建議
 
-### Docker 部署
+### Docker 部署(可選，其實沒必要)
 ```dockerfile
 FROM python:3.9-slim
 WORKDIR /app
