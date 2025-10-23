@@ -15,7 +15,7 @@
 
 ### 後端技術
 - **FastAPI**: 高性能 Python Web 框架
-- **Google Generative AI**: Gemini-2.5-flash 模型用於問題生成和建議
+- **Google Generative AI**: Gemini-2.0-flash 模型用於問題生成和建議
 - **Transformers**: HuggingFace 模型庫
 - **Pydantic**: 數據驗證和設置管理
 
@@ -115,7 +115,7 @@ GET /models
 **回應**:
 ```json
 {
-  "model_name": "gemini-2.5-flash",
+  "model_name": "gemini-2.0-flash",
   "api_key_set": true,
   "total_questions": 5
 }
