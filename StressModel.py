@@ -11,7 +11,7 @@ class StressModel:
 
     def analyze(self, text_zh):
         text_en = self.translator.translate_zn_en(text_zh)
-        print("翻譯後的英文文本:", text_en)
+        # print("翻譯後的英文文本:", text_en)
         result = self.classifier(text_en)
         return result
 

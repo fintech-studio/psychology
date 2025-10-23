@@ -1,0 +1,280 @@
+from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Dict, Any, List, Optional
+import os
+import uuid
+import threading
+
+# 載入環境變數
+from dotenv import load_dotenv
+load_dotenv()
+
+# Google Generative AI SDK
+import google.generativeai as genai
+
+# 本地模型匯入
+from SentimentModel import SentimentModel
+from StressModel import StressModel
+
+# === 配置 ===
+TOTAL_QUESTIONS = 5  # 總問題數
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+MODEL_NAME = "gemini-2.0-flash-exp"  # 使用最新的模型
+
+# 配置 Gemini
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
+else:
+    print("警告：未設定 GOOGLE_API_KEY")
+
+# FastAPI 應用
+app = FastAPI(title="理財問卷 API", version="1.0.0")
+
+# CORS 中介軟體
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 開發環境，生產環境請限制 origin
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 全域變數
+SESSIONS: Dict[str, Dict[str, Any]] = {}
+SESSIONS_LOCK = threading.Lock()
+SENTIMENT_MODEL: Optional[SentimentModel] = None
+STRESS_MODEL: Optional[StressModel] = None
+
+
+# === API 模型 ===
+class StartResponse(BaseModel):
+    session_id: str
+    question: str
+
+class AnswerRequest(BaseModel):
+    session_id: str
+    answer_text: str
+
+class NextQuestionResponse(BaseModel):
+    next_question: Optional[str] = None
+    finished: bool = False
+    advice: Optional[str] = None
+
+# === Gemini 相關函式 ===
+def call_gemini(prompt: str, is_question: bool = False) -> str:
+    """呼叫 Gemini 生成內容"""
+    if not GOOGLE_API_KEY:
+        # Mock 回應
+        if is_question:
+            return "請描述一下你最近一個月的投資狀況與心態？例如投資金額、風險承受度、是否虧損或獲利等。"
+        else:
+            return "根據您的情緒與壓力分析，建議：保持多樣化投資組合、設定適當停損點、降低投資槓桿，並尋求專業理財諮詢。"
+    
+    try:
+        model = genai.GenerativeModel(MODEL_NAME)
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.GenerationConfig(
+                temperature=0.7,
+                max_output_tokens=1024,
+            )
+        )
+        
+        if response.text:
+            return response.text.strip()
+        else:
+            return "(系統暫時無法生成回應，請稍後再試)"
+            
+    except Exception as e:
+        print(f"Gemini API 錯誤: {e}")
+        if "quota" in str(e).lower():
+            return "(API 配額已用完，請稍後再試)"
+        elif "permission" in str(e).lower():
+            return "(API 金鑰權限不足，請檢查設定)"
+        else:
+            return "(系統發生錯誤，無法取得建議)"
+
+def generate_question(question_number: int) -> str:
+    """生成投資理財相關問題"""
+    prompts = [
+        "請生成一個關於個人投資經驗的問題，詢問使用者的投資背景和經驗。問題要簡潔明瞭，一次只問一個重點。",
+        "請生成一個關於風險承受度的問題，了解使用者對投資風險的態度。問題要實用且容易回答。",
+        "請生成一個關於投資目標的問題，了解使用者的投資目的和期望報酬。",
+        "請生成一個關於財務狀況的問題，了解使用者的收入、支出和可投資資金。",
+        "請生成一個關於投資偏好的問題，了解使用者喜歡的投資類型或產品。"
+    ]
+    
+    if question_number < len(prompts):
+        prompt = prompts[question_number]
+    else:
+        prompt = "請生成一個深入的投資理財相關問題，幫助了解使用者的投資心理和決策模式。"
+    
+    return call_gemini(prompt, is_question=True)
+
+
+def sanitize_sentiment_output(raw) -> Dict[str, float]:
+	"""解析 SentimentModel 的輸出並回傳包含 negative、neutral、positive 分數的 dict。
+
+	範例輸入格式：[[{'label': 'negative', 'score': 0.807...}, {'label': 'neutral', 'score': 0.160...}, ...]]
+	"""
+	result = {"negative": 0.0, "neutral": 0.0, "positive": 0.0}
+	try:
+		# allow nested lists
+		flat = raw[0] if isinstance(raw, list) and raw else raw
+		# if still list
+		if isinstance(flat, list):
+			for item in flat:
+				lbl = item.get("label", "").lower()
+				score = float(item.get("score", 0.0))
+				if "neg" in lbl:
+					result["negative"] = score
+				elif "pos" in lbl:
+					result["positive"] = score
+				elif "neu" in lbl:
+					result["neutral"] = score
+		elif isinstance(flat, dict):
+			# single dict
+			lbl = flat.get("label", "").lower()
+			score = float(flat.get("score", 0.0))
+			if "neg" in lbl:
+				result["negative"] = score
+			elif "pos" in lbl:
+				result["positive"] = score
+			elif "neu" in lbl:
+				result["neutral"] = score
+	except Exception:
+		pass
+	return result
+
+
+def sanitize_stress_output(raw) -> Dict[str, float]:
+	"""解析 StressModel 輸出並回傳包含 stress、not_stress 的 dict。"""
+	result = {"stress": 0.0, "not_stress": 0.0}
+	try:
+		flat = raw[0] if isinstance(raw, list) and raw else raw
+		if isinstance(flat, list):
+			for item in flat:
+				lbl = item.get("label", "").lower()
+				score = float(item.get("score", 0.0))
+				if "stress" in lbl and "not" not in lbl:
+					result["stress"] = score
+				elif "not" in lbl or "not stressed" in lbl:
+					result["not_stress"] = score
+		elif isinstance(flat, dict):
+			lbl = flat.get("label", "").lower()
+			score = float(flat.get("score", 0.0))
+			if "stress" in lbl and "not" not in lbl:
+				result["stress"] = score
+			elif "not" in lbl:
+				result["not_stress"] = score
+	except Exception:
+		pass
+	return result
+
+
+@app.get("/models")
+def list_available_models():
+	"""列出可用的 Gemini 模型（除錯用）"""
+	models = get_available_models()
+	return {"available_models": models, "genai_available": GENAI_AVAILABLE, "api_key_set": bool(GOOGLE_API_KEY)}
+
+
+@app.post("/start", response_model=StartResponse)
+def start_test():
+	"""開始新測驗並回傳第一題（由 Gemini 產生）。
+
+	前端應儲存回傳的 session_id，並將使用者回答傳到 /answer。
+	"""
+	session_id = str(uuid.uuid4())
+	# ask Gemini for an initial personalized finance question
+	prompt = "ask_question: Generate a single investment/finance related question that asks about the user's personal situation."
+	question = call_gemini(prompt)
+
+	with SESSIONS_LOCK:
+		SESSIONS[session_id] = {
+			"question_index": 0,
+			"questions": [question],
+			"sentiment_scores": [],
+			"stress_scores": [],
+		}
+
+	return StartResponse(session_id=session_id, question=question)
+
+
+@app.on_event("startup")
+def load_models_on_startup():
+	"""應用啟動時載入大型模型（僅載入一次）。"""
+	global SENTIMENT_MODEL, STRESS_MODEL
+	try:
+		if SENTIMENT_MODEL is None:
+			SENTIMENT_MODEL = SentimentModel()
+	except Exception as e:
+		# 啟動時若載入失敗不強制中斷，但會記錄警告（模型可於第一次請求時延遲載入）
+		print("警告：在啟動時載入 SentimentModel 失敗：", e)
+
+	try:
+		if STRESS_MODEL is None:
+			STRESS_MODEL = StressModel()
+	except Exception as e:
+		print("警告：在啟動時載入 StressModel 失敗：", e)
+
+
+
+@app.post("/answer", response_model=NextQuestionResponse)
+def submit_answer(req: AnswerRequest):
+	# validate session
+	sid = req.session_id
+	with SESSIONS_LOCK:
+		if sid not in SESSIONS:
+			raise HTTPException(status_code=404, detail="session not found")
+		sess = SESSIONS[sid]
+
+	# 使用啟動時載入的模型單例來執行情緒與壓力分析
+	global SENTIMENT_MODEL, STRESS_MODEL
+	if SENTIMENT_MODEL is None or STRESS_MODEL is None:
+		# fallback: lazy-load if startup event didn't run
+		SENTIMENT_MODEL = SentimentModel()
+		STRESS_MODEL = StressModel()
+
+	sentiment_raw = SENTIMENT_MODEL.analyze(req.answer_text)
+	stress_raw = STRESS_MODEL.analyze(req.answer_text)
+
+	sentiment = sanitize_sentiment_output(sentiment_raw)
+	stress = sanitize_stress_output(stress_raw)
+
+	# 儲存分數
+	with SESSIONS_LOCK:
+		sess["sentiment_scores"].append(sentiment)
+		sess["stress_scores"].append(stress)
+		sess["question_index"] += 1
+		qidx = sess["question_index"]
+
+	if qidx >= TOTAL_QUESTIONS:
+		# 已達題數上限 -> 聚合分數並將摘要送給 Gemini 取得最終建議
+		# 建立一個摘要 prompt 包含每題的情緒與壓力分數
+		summary_lines: List[str] = []
+		for i, (s_sent, s_str) in enumerate(zip(sess["sentiment_scores"], sess["stress_scores"])):
+			summary_lines.append(f"Q{i+1}: sentiment_neg={s_sent.get('negative',0):.3f}, sentiment_neu={s_sent.get('neutral',0):.3f}, sentiment_pos={s_sent.get('positive',0):.3f}, stress={s_str.get('stress',0):.3f}, not_stress={s_str.get('not_stress',0):.3f}")
+
+		final_prompt = (
+			"請根據下列使用者回覆的情緒與壓力分數，提供個人化的理財建議與心理健康相關建議。"
+			"請同時考量 sentiment（情緒）與 stress（壓力）分數，提供可執行的理財與情緒調適建議。\n\n" + "\n".join(summary_lines)
+		)
+
+		gemini_reply = call_gemini(final_prompt)
+
+		# clean up session
+		with SESSIONS_LOCK:
+			del SESSIONS[sid]
+
+		return NextQuestionResponse(next_question=None, finished=True, advice=gemini_reply)
+
+	# 若尚未結束，向 Gemini 要下一題並回傳
+	prompt = "ask_question: 產生另一個簡短的追問，圍繞投資/理財，旨在進一步瞭解使用者的個人情況。"
+	next_q = call_gemini(prompt)
+
+	with SESSIONS_LOCK:
+		sess["questions"].append(next_q)
+
+	return NextQuestionResponse(next_question=next_q, finished=False)

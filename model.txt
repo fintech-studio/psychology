@@ -1,9 +1,0 @@
-HuggingFace Pretrain Model
-
-# SentimentModel
-ProsusAI/finbert
-j-hartmann/emotion-english-distilroberta-base
-
-# StressModel
-qwendatastress
-dstefa/roberta-base_stress_classification
