@@ -22,7 +22,8 @@
 ### AI 模型
 - **情緒分析**: ProsusAI/finbert (金融領域情緒分析)
 - **壓力檢測**: roberta-base_stress_classification
-- **問題生成**: Google Gemini-2.5-flash
+- **問題生成**: Google Gemini-2.0-flash(建議)
+               Google Gemini-2.0-flash-exp (不要使用gemini-2.5系列，高機率會有安全過濾阻斷回復)
 - **翻譯**: Google Translate (透過 utils/Translate.py)
 
 ## 安裝與設置
@@ -156,7 +157,7 @@ psychology/
 
 ### 模型配置
 - **總問題數**: 5 題 (可在 `main.py` 中調整 `TOTAL_QUESTIONS`)
-- **Gemini 模型**: gemini-2.5-flash
+- **Gemini 模型**: gemini-2.0-flash 或 gemini-2.0-flash-exp
 - **溫度參數**: 0.7 (控制回答創造性)
 - **最大輸出**: 1024 tokens
 
