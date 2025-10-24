@@ -14,8 +14,8 @@ load_dotenv()
 import google.generativeai as genai
 
 # 本地模型匯入
-from SentimentModel import SentimentModel
-from StressModel import StressModel
+from models.SentimentModel import SentimentModel
+from models.StressModel import StressModel
 
 # === 配置 ===
 TOTAL_QUESTIONS = 3  # 總問題數
@@ -409,6 +409,6 @@ def root():
     """根路徑"""
     return {"message": "理財問卷 API 服務", "version": "1.0.0", "endpoints": ["/start", "/answer", "/models"]}
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# if __name__ == "__main__":
+#     import uvicorn
+#     uvicorn.run(app, host="0.0.0.0", port=8000)
