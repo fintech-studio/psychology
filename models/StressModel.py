@@ -14,9 +14,3 @@ class StressModel:
         # print("翻譯後的英文文本:", text_en)
         result = self.classifier(text_en)
         return result
-
-if __name__ == "__main__":
-    model = StressModel()
-    text = input("請輸入中文文本進行壓力分析: ")
-    res = model.analyze(text)
-    print(res)
