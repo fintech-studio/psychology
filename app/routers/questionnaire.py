@@ -1,10 +1,10 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from ..schemas.questionnaire import StartResponse, AnswerRequest, NextQuestionResponse, StreamQuestionRequest, SaveQuestionRequest
-from ..services.questionnaire_service import QuestionnaireService
-from ..services.analysis_service import AnalysisService
-from ..services.gemini_service import GeminiService
-from ..config import TOTAL_QUESTIONS
+from schemas.questionnaire import StartResponse, AnswerRequest, NextQuestionResponse, StreamQuestionRequest, SaveQuestionRequest
+from services.questionnaire_service import QuestionnaireService
+from services.analysis_service import AnalysisService
+from services.gemini_service import GeminiService
+from config import TOTAL_QUESTIONS
 from typing import Dict, Any
 import json
 

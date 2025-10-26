@@ -1,5 +1,5 @@
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
-from ..utils.Translate import Translator
+from utils.Translate import Translator
 
 class StressModel:
     def __init__(self):

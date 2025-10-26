@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional
 import uuid
 import threading
-from ..config import TOTAL_QUESTIONS
+from config import TOTAL_QUESTIONS
 
 class QuestionnaireService:
     def __init__(self):

@@ -1,22 +1,10 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import time
-import os
-import sys
-
-# 添加專案根目錄到 Python 路徑
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
-
-# 載入環境變數
-from dotenv import load_dotenv
-load_dotenv()
 
 # 導入應用模組
-from app.routers.questionnaire import router as questionnaire_router
-from app.services.analysis_service import AnalysisService
+from routers.questionnaire import router as questionnaire_router
+from services.analysis_service import AnalysisService
 
 # FastAPI 應用
 app = FastAPI(title="心理問卷 API", version="1.0.0")

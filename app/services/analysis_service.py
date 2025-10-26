@@ -1,7 +1,7 @@
 from typing import Dict
-from ..models.SentimentModel import SentimentModel
-from ..models.StressModel import StressModel
-from ..config import ENABLE_CONTEXT_ANALYSIS
+from models.SentimentModel import SentimentModel
+from models.StressModel import StressModel
+from config import ENABLE_CONTEXT_ANALYSIS
 
 class AnalysisService:
     def __init__(self):
