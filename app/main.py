@@ -4,7 +4,7 @@ import time
 
 # 導入應用模組
 from routers.questionnaire import router as questionnaire_router
-from services.analysis_service import AnalysisService
+import models
 
 # FastAPI 應用
 app = FastAPI(title="心理問卷 API", version="1.0.0")
@@ -36,12 +36,9 @@ async def startup_event():
     """應用程式啟動時執行"""
     print("正在載入分析模型...")
     
-    # 初始化服務
-    analysis_service = AnalysisService()
-    
     try:
-        analysis_service.ensure_models_loaded()
-        print("✅ 分析模型載入成功")
+        if models.sentimentModel and models.stressModel:
+            print("✅ 分析模型載入成功")
     except Exception as e:
         print(f"⚠️  分析模型載入失敗: {e}")
     

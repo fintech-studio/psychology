@@ -1,20 +1,11 @@
 from typing import Dict
-from models.SentimentModel import SentimentModel
-from models.StressModel import StressModel
+from models import sentimentModel, stressModel
 from config import ENABLE_CONTEXT_ANALYSIS
 
 class AnalysisService:
     def __init__(self):
-        self.sentiment_model = None
-        self.stress_model = None
-    
-    def ensure_models_loaded(self):
-        """確保模型已載入"""
-        if self.sentiment_model is None:
-            self.sentiment_model = SentimentModel()
-        if self.stress_model is None:
-            self.stress_model = StressModel()
-    
+        pass
+ 
     def sanitize_sentiment_output(self, raw) -> Dict[str, float]:
         """解析 SentimentModel 輸出，提取 negative、neutral、positive 分數"""
         result = {"negative": 0.0, "neutral": 0.0, "positive": 0.0}
@@ -79,7 +70,6 @@ class AnalysisService:
     
     def analyze_user_response(self, text: str, question: str = "") -> tuple[Dict[str, float], Dict[str, float]]:
         """分析使用者回應，回傳情緒和壓力分數"""
-        self.ensure_models_loaded()
         
         # 根據配置決定是否使用上下文分析
         if ENABLE_CONTEXT_ANALYSIS and question.strip():
@@ -93,9 +83,9 @@ class AnalysisService:
             print(f"📊 分析回答: {analysis_text[:50]}...")  # 顯示前50字符用於調試
         
         # 執行分析（使用包含上下文的文本）
-        sentiment_raw = self.sentiment_model.analyze(analysis_text)
-        stress_raw = self.stress_model.analyze(analysis_text)
-        
+        sentiment_raw = sentimentModel.analyze(analysis_text)
+        stress_raw = stressModel.analyze(analysis_text)
+
         # 解析結果
         sentiment_scores = self.sanitize_sentiment_output(sentiment_raw)
         stress_scores = self.sanitize_stress_output(stress_raw)

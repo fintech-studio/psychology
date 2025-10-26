@@ -25,6 +25,7 @@ class GeminiService:
         if self.api_key:
             genai.configure(api_key=self.api_key)
             print("✅ Gemini API 金鑰設定成功")
+            print("模型:", self.model_name)
         else:
             print("警告：未設定 GOOGLE_API_KEY，將使用模擬回應")
     

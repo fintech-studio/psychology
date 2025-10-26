@@ -1,7 +1,7 @@
 from transformers import pipeline
 
 class Translator:
-    def init__(self):
+    def __init__(self):
         pass
 
     def translate_zn_en(self, text):
