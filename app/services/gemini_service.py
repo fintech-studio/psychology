@@ -154,13 +154,27 @@ class GeminiService:
         if not self.api_key:
             return "根據您的回答，建議您：1) 建立規律的壓力管理習慣 2) 尋求適當的社會支持 3) 學習正向的情緒調節技巧 4) 保持健康的生活作息"
         
-        # 構建分析摘要
+        # 構建分析摘要和計算平均分數
         summary_lines = []
+        total_negative = 0
+        total_neutral = 0
+        total_positive = 0
+        total_stress = 0
+        total_not_stress = 0
+        response_count = len(all_responses)
+        
         for i, response in enumerate(all_responses, 1):
             sentiment = response.get("sentiment", {})
             stress = response.get("stress", {})
             question = response.get("question", f"問題{i}")
             answer = response.get("answer", "無回答")
+            
+            # 累加分數用於計算平均值
+            total_negative += sentiment.get('negative', 0)
+            total_neutral += sentiment.get('neutral', 0)
+            total_positive += sentiment.get('positive', 0)
+            total_stress += stress.get('stress', 0)
+            total_not_stress += stress.get('not_stress', 0)
             
             summary_lines.append(
                 f"問題{i}: {question}\n"
@@ -170,15 +184,32 @@ class GeminiService:
                 f"壓力水平:{stress.get('stress', 0):.3f}\n"
             )
         
+        # 計算平均分數
+        if response_count > 0:
+            avg_negative = total_negative / response_count
+            avg_neutral = total_neutral / response_count
+            avg_positive = total_positive / response_count
+            avg_stress = total_stress / response_count
+            avg_not_stress = total_not_stress / response_count
+        else:
+            avg_negative = avg_neutral = avg_positive = avg_stress = avg_not_stress = 0
+        
         # 生成 prompt 給 Gemini
         prompt = f"""
 請根據以下使用者在心理問卷中的情緒與壓力分析結果，提供個人化的心理健康建議：
 
-詳細分析結果：
+整體平均分析結果：
+- 平均負面情緒: {avg_negative:.3f}
+- 平均中性情緒: {avg_neutral:.3f}
+- 平均正面情緒: {avg_positive:.3f}
+- 平均壓力水平: {avg_stress:.3f}
+- 平均無壓力水平: {avg_not_stress:.3f}
+
+詳細問答與分析：
 {chr(10).join(summary_lines)}
 
 請提供：
-1. 心理狀態分析
+1. 心理狀態整體分析（基於平均分數）
 2. 壓力管理建議
 3. 情緒調適技巧
 4. 具體的改善方案
@@ -186,6 +217,11 @@ class GeminiService:
 請用繁體中文回答，內容要實用且易於執行。
 注意：請不要使用任何 Markdown 格式標記，回答內容應該是純文字格式。
         """
+        
+        # Debug: 印出傳給 Gemini 的完整內容
+        # print(f"Debug - 回答數量: {response_count}")
+        # print(f"Debug - 傳給 Gemini 的 prompt:\n{prompt}")
+        # print("=" * 50)
         
         try:
             model = genai.GenerativeModel(self.model_name)

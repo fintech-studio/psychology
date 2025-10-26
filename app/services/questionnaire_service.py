@@ -9,7 +9,7 @@ class QuestionnaireService:
         self.sessions: Dict[str, Dict] = {}
         self.sessions_lock = threading.Lock()
         
-        # 問題設定 - 使用配置檔案中的設定
+        # 問題設定
         self.total_questions = TOTAL_QUESTIONS
     
     def create_session(self) -> str:
