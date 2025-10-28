@@ -51,7 +51,17 @@ class QuestionnaireService:
             if not session:
                 return False
             
-            session["questions"].append(question)
+            current_index = session["current_question"]
+            questions = session["questions"]
+            
+            # 確保 questions 列表足夠長，填充空位置
+            while len(questions) <= current_index:
+                questions.append("")
+            
+            # 在正確的索引位置儲存問題
+            questions[current_index] = question
+            # print(f"🔍 儲存問題到索引 {current_index}: {question[:50]}...")
+            
             return True
     
     def save_response(self, session_id: str, answer: str, sentiment_scores: Dict[str, float], stress_scores: Dict[str, float]) -> bool:
@@ -64,8 +74,11 @@ class QuestionnaireService:
             current_index = session["current_question"]
             questions = session.get("questions", [])
             
-            if current_index >= len(questions):
+            if current_index >= len(questions) or not questions[current_index]:
+                print(f"⚠️ 警告：第 {current_index + 1} 題問題尚未正確儲存")
                 return False
+            
+            # print(f"🔍 使用問題 (索引 {current_index}): {questions[current_index][:50]}...")
             
             # 儲存回答和分析結果
             response_data = {

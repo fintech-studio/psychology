@@ -1,7 +1,7 @@
 # 應用程式配置檔案
 
 # 問卷設定
-TOTAL_QUESTIONS = 2  # 問題總數，可以調整為任意數量
+TOTAL_QUESTIONS = 4  # 問題總數，可以調整為任意數量
 MIN_QUESTIONS = 3    # 最少問題數
 MAX_QUESTIONS = 10   # 最多問題數
 

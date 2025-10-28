@@ -71,6 +71,10 @@ class AnalysisService:
     def analyze_user_response(self, text: str, question: str = "") -> tuple[Dict[str, float], Dict[str, float]]:
         """分析使用者回應，回傳情緒和壓力分數"""
         
+        # # 除錯：顯示傳入的問題內容
+        # print(f"🔍 傳入的 question 參數: '{question}'")
+        # print(f"🔍 question 長度: {len(question)}")
+        
         # 根據配置決定是否使用上下文分析
         if ENABLE_CONTEXT_ANALYSIS and question.strip():
             # 組合問題和回答提供完整上下文
@@ -80,6 +84,8 @@ class AnalysisService:
         else:
             # 如果沒有問題或未啟用上下文分析，就直接用回答
             analysis_text = text.strip()
+            if question:
+                print(f"⚠️ 有問題但未使用上下文分析: {question[:50]}...")
             print(f"📊 分析回答: {analysis_text[:50]}...")  # 顯示前50字符用於調試
         
         # 執行分析（使用包含上下文的文本）
