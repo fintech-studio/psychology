@@ -1,12 +1,17 @@
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+from transformers import (AutoTokenizer,
+                          AutoModelForSequenceClassification, pipeline)
 from utils.Translate import Translator
+
 
 class SentimentModel:
     def __init__(self):
         self.model_name = "ProsusAI/finbert"
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
-        self.classifier = pipeline("text-classification", model=self.model, tokenizer=self.tokenizer, top_k=None,device=0)
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            self.model_name)
+        self.classifier = pipeline("text-classification", model=self.model,
+                                   tokenizer=self.tokenizer,
+                                   top_k=None, device=0)
         self.translator = Translator()
 
     def analyze(self, text_zh):

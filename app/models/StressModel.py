@@ -1,16 +1,14 @@
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
-from utils.Translate import Translator
+# Stub: stress model 已停用，保留簡單介面以避免呼叫端錯誤
 
 class StressModel:
     def __init__(self):
-        self.model_name = "dstefa/roberta-base_stress_classification"
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
-        self.classifier = pipeline("text-classification", model=self.model, tokenizer=self.tokenizer, top_k=None,device=0)
-        self.translator = Translator()
+        # 不再載入大型模型，僅提示已停用
+        print("⚠️ StressModel disabled: "
+              "stress analysis removed from the project.")
 
     def analyze(self, text_zh):
-        text_en = self.translator.translate_zn_en(text_zh)
-        # print("翻譯後的英文文本:", text_en)
-        result = self.classifier(text_en)
-        return result
+        """
+        回傳空的分析結果結構（與原有模型回傳格式相容的最小表現）。
+        這樣呼叫端仍可處理返回值而不會拋例外。
+        """
+        return []  # 原本模型回傳 list 結構，保留一致性

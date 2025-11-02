@@ -18,6 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # 調試中介軟體 - 記錄請求
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -31,39 +32,37 @@ async def log_requests(request: Request, call_next):
 # 註冊路由
 app.include_router(questionnaire_router)
 
+
 @app.on_event("startup")
 async def startup_event():
     """應用程式啟動時執行"""
     print("正在載入分析模型...")
-    
     try:
-        if models.sentimentModel and models.stressModel:
+        # 只檢查情緒分析模型（stressModel 已移除/停用）
+        if models.sentimentModel:
             print("✅ 分析模型載入成功")
     except Exception as e:
         print(f"⚠️  分析模型載入失敗: {e}")
-    
-    print(f"🚀 心理問卷 API 啟動完成")
+
+    print("🚀 心理問卷 API 啟動完成")
+
 
 @app.get("/")
 def root():
     """根路徑"""
     return {
-        "message": "心理問卷 API 服務", 
-        "version": "1.0.0", 
+        "message": "心理問卷 API 服務",
+        "version": "1.0.0",
         "endpoints": [
             "/questionnaire/start",
-            "/questionnaire/answer", 
+            "/questionnaire/answer",
             "/questionnaire/stream-question",
-            "/questionnaire/save-question"
-        ]
+            "/questionnaire/save-question",
+        ],
     }
+
 
 @app.get("/health")
 def health_check():
     """健康檢查端點"""
     return {"status": "healthy", "service": "psychology-questionnaire-api"}
-
-# if __name__ == "__main__":
-#     import uvicorn
-#     print("🚀 啟動心理問卷 API 服務...")
-#     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
