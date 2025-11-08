@@ -31,6 +31,7 @@ psychology/
 ├── .env                           # 環境變數（需自行建立）
 ├── .env.example                   # 環境變數範例
 ├── .gitignore
+├── pyproject.toml                 # Python專案配置
 ├── requirements.txt               # 依賴套件
 └── README.md                      # 專案說明
 ```
@@ -111,6 +112,8 @@ git clone <repository-url>
 cd psychology
 
 # 2. 安裝依賴
+pip install -e .
+或
 pip install -r requirements.txt
 
 # 3. 設置環境變數

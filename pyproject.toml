@@ -1,0 +1,15 @@
+[project]
+name = "psychology"
+version = "1.0.0"
+description = "A smart investment psychology analysis system based on FastAPI"
+readme = "README.md"
+requires-python = "==3.12.7"
+
+dependencies = [
+    "google-generativeai==0.8.5",
+    "FastAPI==0.121.0",
+    "python-dotenv==1.2.1",
+    "transformers==4.57.1",
+    "uvicorn==0.38.0",
+    "torch==2.6",
+]
