@@ -31,26 +31,25 @@ psychology/
 ├── .env                           # 環境變數（需自行建立）
 ├── .env.example                   # 環境變數範例
 ├── .gitignore
-├── pyproject.toml                 # Python專案配置
-├── requirements.txt               # 依賴套件
+├── pyproject.toml                 # 專案配置
+├── requirements.txt               # 相依套件清單
+├── uv.lock                        # 套件詳細訊息
+├── .python-version                # python版本
 └── README.md                      # 專案說明
 ```
 ## 管理工具 uv
 
 安裝uv
-```
+```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
 ```
 初始化專案
-```
+```powershell
 uv init
-
 ```
-安裝依賴
-```
+安裝套件
+```poershell
 uv add [package-name]
-
 ```
 
 ## 🎯 功能特色
@@ -123,7 +122,7 @@ uv add [package-name]
 
 ### 安裝步驟
 
-```bash
+```powershell
 # 1. 克隆專案
 git clone <repository-url>
 cd psychology
@@ -142,7 +141,7 @@ echo "GOOGLE_API_KEY = your_gemini_api_key_here" > .env
 
 ### 啟動服務
 
-```bash
+```powershell
 # 開發模式（自動重載）
 cd app
 uvicorn main:app --reload --host 0.0.0.0 --port 8081
