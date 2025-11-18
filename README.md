@@ -35,6 +35,23 @@ psychology/
 ├── requirements.txt               # 依賴套件
 └── README.md                      # 專案說明
 ```
+## 管理工具 uv
+
+安裝uv
+```
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+```
+初始化專案
+```
+uv init
+
+```
+安裝依賴
+```
+uv add [package-name]
+
+```
 
 ## 🎯 功能特色
 
