@@ -1,7 +1,7 @@
 [project]
 name = "psychology"
 version = "0.1.0"
-description = "Add your description here"
+description = "A FastAPI application for psychology-related tasks using generative AI."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

@@ -32,8 +32,8 @@ psychology/
 ├── .env.example                   # 環境變數範例
 ├── .gitignore
 ├── pyproject.toml                 # 專案配置
-├── requirements.txt               # 相依套件清單
 ├── uv.lock                        # 套件詳細訊息
+├── requirements.txt      
 ├── .python-version                # python版本
 └── README.md                      # 專案說明
 ```
@@ -48,9 +48,14 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 uv init
 ```
 安裝套件
-```poershell
+```powershell
 uv add [package-name]
 ```
+同步環境
+```powershell
+uv sync
+```
+
 
 ## 🎯 功能特色
 
@@ -127,7 +132,7 @@ uv add [package-name]
 git clone <repository-url>
 cd psychology
 
-# 2. 安裝依賴
+# 2. 安裝依賴(不用uv)
 pip install -e .
 或
 pip install -r requirements.txt
