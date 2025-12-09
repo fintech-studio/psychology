@@ -1,11 +1,21 @@
 from typing import Dict, List
+import logging
 from models import sentimentModel  # 移除 stressModel
 from config import ENABLE_CONTEXT_ANALYSIS
+
+logger = logging.getLogger(__name__)
 
 
 class AnalysisService:
     def __init__(self):
-        pass
+        # ensure sentiment model is initialized (deferred load)
+        try:
+            from models import init_models
+            init_models()
+            from models import sentimentModel as sm
+            self.sentiment = sm
+        except Exception:
+            self.sentiment = None
 
     def sanitize_sentiment_output(self, raw) -> Dict[str, float]:
         """解析 SentimentModel 輸出，提取 negative、neutral、positive 分數"""
@@ -30,7 +40,7 @@ class AnalysisService:
                 elif "neutral" in label or "neu" in label:
                     result["neutral"] = score
         except Exception as e:
-            print(f"解析情緒輸出時發生錯誤: {e}")
+            logger.exception("解析情緒輸出時發生錯誤: %s", e)
         return result
 
     def analyze_user_response(self, text: str, question: str = "") -> (
@@ -39,20 +49,22 @@ class AnalysisService:
         """分析使用者回應，回傳情緒與（空的）壓力分數以維持相容 API"""
         if ENABLE_CONTEXT_ANALYSIS and question.strip():
             analysis_text = f"問題：{question.strip()} 回答：{text.strip()}"
-            print(f"📊 分析上下文: {analysis_text[:100]}...")
+            logger.debug("分析上下文: %s", analysis_text[:100])
         else:
             analysis_text = text.strip()
             if question:
-                print(f"⚠️ 有問題但未使用上下文分析: {question[:50]}...")
-            print(f"📊 分析回答: {analysis_text[:50]}...")
+                logger.warning("有問題但未使用上下文分析: %s", question[:50])
+            logger.debug("分析回答: %s", analysis_text[:50])
 
         # 只執行情緒分析（stressModel 已移除）
-        sentiment_raw = sentimentModel.analyze(analysis_text)
+        sentiment_raw = None
+        if self.sentiment:
+            sentiment_raw = self.sentiment.analyze(analysis_text)
 
         sentiment_scores = self.sanitize_sentiment_output(sentiment_raw)
         stress_scores = {}  # 回傳空 dict 以保持呼叫端相容性
 
-        print(f"🎭 情緒分析結果: {sentiment_scores}")
+        logger.debug("情緒分析結果: %s", sentiment_scores)
         # 移除壓力分析輸出
 
         return sentiment_scores, stress_scores

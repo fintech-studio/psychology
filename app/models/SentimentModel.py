@@ -1,3 +1,5 @@
+import logging
+import torch
 from transformers import (AutoTokenizer,
                           AutoModelForSequenceClassification, pipeline)
 from utils.Translate import Translator
@@ -6,12 +8,15 @@ from utils.Translate import Translator
 class SentimentModel:
     def __init__(self):
         self.model_name = "ProsusAI/finbert"
+        # Determine device: GPU if available otherwise CPU. If CPU, pipeline expects device=-1
+        device = 0 if torch.cuda.is_available() else -1
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModelForSequenceClassification.from_pretrained(
-            self.model_name)
-        self.classifier = pipeline("text-classification", model=self.model,
+        self.model = AutoModelForSequenceClassification.from_pretrained(self.model_name)
+        self.classifier = pipeline("text-classification",
+                                   model=self.model,
                                    tokenizer=self.tokenizer,
-                                   top_k=None, device=0)
+                                   top_k=None,
+                                   device=device)
         self.translator = Translator()
 
     def analyze(self, text_zh):

@@ -1,13 +1,17 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import time
+import logging
+logging.basicConfig(level=logging.INFO)
 
 # 導入應用模組
 from routers.questionnaire import router as questionnaire_router
 import models
+from services import geminiService
 
 # FastAPI 應用
 app = FastAPI(title="心理問卷 API", version="1.0.0")
+logger = logging.getLogger(__name__)
 
 # CORS 中介軟體
 app.add_middleware(
@@ -23,10 +27,10 @@ app.add_middleware(
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
-    print(f"收到請求: {request.method} {request.url}")
+    logger.info("收到請求: %s %s", request.method, request.url)
     response = await call_next(request)
     process_time = time.time() - start_time
-    print(f"回應: {response.status_code} - 耗時: {process_time:.3f}s")
+    logger.info("回應: %s - 耗時: %.3fs", response.status_code, process_time)
     return response
 
 # 註冊路由
@@ -36,15 +40,32 @@ app.include_router(questionnaire_router)
 @app.on_event("startup")
 async def startup_event():
     """應用程式啟動時執行"""
-    print("正在載入分析模型...")
+    logger.info("正在載入分析模型...")
     try:
-        # 只檢查情緒分析模型（stressModel 已移除/停用）
+        # 初始化模型（延遲載入以加快 import/熱重載）
+        models.init_models()
         if models.sentimentModel:
-            print("✅ 分析模型載入成功")
+            logger.info("✅ 分析模型載入成功")
     except Exception as e:
-        print(f"⚠️  分析模型載入失敗: {e}")
+        logger.exception("⚠️ 分析模型載入失敗: %s", e)
 
-    print("🚀 心理問卷 API 啟動完成")
+    # Initialize asynchronous services (e.g., health check for local LLM service)
+    try:
+        await geminiService.init()
+    except Exception as e:
+        logger.exception("⚠️ 初始化 GeminiService 時發生錯誤: %s", e)
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup resources on application shutdown"""
+    try:
+        await geminiService.shutdown()
+        logger.info("GeminiService http client closed")
+    except Exception:
+        logger.exception("Failed to shutdown GeminiService cleanly")
+
+    logger.info("🚀 心理問卷 API 啟動完成")
 
 
 @app.get("/")

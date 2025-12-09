@@ -6,7 +6,10 @@ from schemas.questionnaire import (StartResponse, AnswerRequest,
 from config import TOTAL_QUESTIONS
 from typing import Dict, Any
 import json
+import logging
 from services import analysisService, geminiService, questionnaireService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/questionnaire", tags=["questionnaire"])
 
@@ -35,7 +38,7 @@ async def start_questionnaire() -> StartResponse:
             total_questions=TOTAL_QUESTIONS
         )
     except Exception as e:
-        print(f"開始問卷時發生錯誤: {e}")
+        logger.exception("開始問卷時發生錯誤: %s", e)
         raise HTTPException(status_code=500, detail="伺服器內部錯誤")
 
 
@@ -103,7 +106,7 @@ async def submit_answer(request: AnswerRequest) -> NextQuestionResponse:
     except HTTPException:
         raise
     except Exception as e:
-        print(f"提交答案時發生錯誤: {e}")
+        logger.exception("提交答案時發生錯誤: %s", e)
         raise HTTPException(status_code=500, detail="伺服器內部錯誤")
 
 
@@ -143,7 +146,7 @@ async def stream_question(request: StreamQuestionRequest):
     except HTTPException:
         raise
     except Exception as e:
-        print(f"串流問題時發生錯誤: {e}")
+        logger.exception("串流問題時發生錯誤: %s", e)
         raise HTTPException(status_code=500, detail="伺服器內部錯誤")
 
 
@@ -203,5 +206,5 @@ async def save_question(request: SaveQuestionRequest) -> Dict[str, Any]:
     except HTTPException:
         raise
     except Exception as e:
-        print(f"儲存問題時發生錯誤: {e}")
+        logger.exception("儲存問題時發生錯誤: %s", e)
         raise HTTPException(status_code=500, detail="伺服器內部錯誤")

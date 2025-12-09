@@ -1,7 +1,10 @@
 from typing import Dict, List, Optional
 import uuid
 import threading
+import logging
 from config import TOTAL_QUESTIONS
+
+logger = logging.getLogger(__name__)
 
 
 class QuestionnaireService:
@@ -78,7 +81,7 @@ class QuestionnaireService:
             questions = session.get("questions", [])
 
             if current_index >= len(questions) or not questions[current_index]:
-                print(f"⚠️ 警告：第 {current_index + 1} 題問題尚未正確儲存")
+                logger.warning("⚠️ 警告：第 %s 題問題尚未正確儲存", current_index + 1)
                 return False
 
             # print(f"🔍 使用問題 (索引 {current_index}):

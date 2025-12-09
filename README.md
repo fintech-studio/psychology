@@ -1,6 +1,6 @@
 # 投資心理問卷 API 系統
 
-基於 FastAPI 的智能投資心理分析系統，結合 Google Gemini AI 和 FinBERT 情緒分析模型，為用戶提供個人化的投資心理評估和建議。採用現代化模組化架構設計。
+基於 FastAPI 的智能投資心理分析系統，結合本地部署的 Ollama 模型（或 Google Gemini AI）與 FinBERT 情緒分析模型，為用戶提供個人化的投資心理評估和建議。採用現代化模組化架構設計。
 
 ## 📁 專案架構
 
@@ -20,7 +20,7 @@ psychology/
 │   ├── services/                  # 業務邏輯服務
 │   │   ├── __init__.py
 │   │   ├── analysis_service.py    # 心理分析與投資者分類服務
-│   │   ├── gemini_service.py      # AI 問題生成與建議服務
+│   │   ├── gemini_service.py      # AI 問題生成與建議服務（採用本地 Ollama 或 Gemini）
 │   │   └── questionnaire_service.py # 問卷會話管理服務
 │   └── utils/                     # 工具類
 │       ├── test.py
@@ -59,7 +59,7 @@ uv sync
 
 ## 🎯 功能特色
 
-- 🤖 **動態問題生成**：使用 Gemini AI 根據用戶回答動態生成個人化問題
+- 🤖 **動態問題生成**：使用本地部署的 Ollama（或 Google Gemini）根據用戶回答動態生成個人化問題
 - 📊 **多種題型支援**：支援選擇題、Likert 量表、開放式問題
 - 🧠 **情緒分析**：使用 FinBERT 模型分析投資相關情緒（正面/負面/中性）
 - 💼 **投資者分類**：基於心理特徵將用戶分類為五種投資者類型
@@ -70,7 +70,7 @@ uv sync
 
 ### 1. 智能問卷設計
 
-- **動態問題生成**: 使用 Gemini AI 根據用戶回答歷史生成個人化問題
+- **動態問題生成**: 使用本地部署的 Ollama（或 Google Gemini）根據用戶回答歷史生成個人化問題
 - **題型輪替機制**: 自動輪替情緒反應、壓力感知、風險偏好、決策習慣四種題型
 - **格式自動識別**: 前端可自動識別選擇題、Likert 量表、開放式問題
 
@@ -88,10 +88,10 @@ uv sync
 - 投資者類型分類演算法
 - 支援上下文分析（問題+回答）
 
-#### 🤖 GeminiService
+#### 🤖 GeminiService (Ollama 本地化)
 
 - 動態問題生成與串流顯示
-- 個人化建議生成
+- 個人化建議生成（使用本地 Ollama）
 - 支援 fallback 機制確保服務穩定性
 
 #### 📝 QuestionnaireService
@@ -105,7 +105,7 @@ uv sync
 ### 後端技術
 
 - **FastAPI**: 高性能 Python Web 框架，支援自動 API 文檔生成
-- **Google Generative AI**: Gemini-2.0-flash 模型用於問題生成和建議
+-- **Local Ollama / Google Generative AI**: 在本地使用 Ollama 部署的模型（或使用 Google Gemini）用於問題生成和建議
 - **Transformers**: HuggingFace 模型庫，支援 GPU 加速
 - **Pydantic**: 資料驗證和設定管理
 - **Python-dotenv**: 環境變數管理
@@ -123,7 +123,28 @@ uv sync
 
 - Python 3.8+
 - CUDA（推薦，用於 GPU 加速模型推理）
-- Google API Key（用於 Gemini AI 服務）
+- (可選) Google API Key（僅在使用 Google Gemini 而非本地 Ollama 時需要）
+
+### Troubleshooting: Ollama local model not returning results
+
+- 若您發現 API 只回傳 fallback（預設）回應，而非 AI 生成的建議，請先確認以下項目：
+  1. Ollama 是否已啟動並能回應，執行：
+    ```powershell
+    ollama ls
+    ```
+    若看到可用模型清單，代表 Ollama 服務可用。
+  2. 確認 `OLLAMA_MODEL_NAME` 的值（在 `.env` 或 `app/config.py`），並改為您本機已安裝的模型（例如：`llama3.1:8b`）。
+  3. 測試模型回應（本地呼叫示例）：
+    ```powershell
+    curl --silent -X POST "http://127.0.0.1:11434/api/generate" -H "Content-Type: application/json" -d "{\"model\": \"llama3.2:8b\", \"prompt\": \"測試：請回一句繁體中文問候\", \"max_tokens\": 40}"
+    ```
+    若能取得 JSON lines 串流或回應，代表模型可用。
+  4. 若模型僅輸出「thinking」字串或 chain-of-thought，而非最後的 `response` 欄位（常見於自定義模型），請改用常見的回應型模型（例如：`llama3.1:8b`）或確保自定義模型會傳回最終 `response` 欄位。
+
+我們已將服務邏輯改為：
+- 先嘗試 `OLLAMA_MODEL_NAME`（或 `.env` 指定的模型）
+- 若模型回應缺少 `response` 欄位或根本無回應，將嘗試 `OLLAMA_MODEL_FALLBACKS` 清單中可用的模型（例如 `llama3.1:8b`），並會在必要時自動切換為能輸出最終回應的模型。
+
 
 ### 安裝步驟
 
@@ -352,3 +373,14 @@ A: 修改 `config.py` 中的 `TOTAL_QUESTIONS` 參數即可。
 ### Q: 投資者分類演算法？
 
 A: 基於風險偏好和穩定性兩個主要維度，結合其他心理特徵進行分類。
+
+## 🛠️ 本次優化 (Changelog)
+- 改善 `GeminiService`：從同步 `requests` 改為非同步 `httpx.AsyncClient`，避免阻塞事件循環。
+- `GeminiService` 現在使用 async `init()` 進行健康檢查，並在 `main` 啟動時初始化。
+- `utils/Translate.py`：延遲載入與快取 pipeline，避免對 Transformers 模型重複載入。
+- 推遲模型載入：`models/__init__` 改為延遲（lazy）初始化 `SentimentModel`，減少 import 時的延遲。
+- 切換 `print()` 為標準 `logging`，更適合生產環境的日誌管理。
+- 修正動態題目生成中的 UnboundLocalError（`question` 變數）與其他錯誤處理。
+- 新增基本單元測試：`test/test_translate.py`, `test/test_gemini_service.py`。
+
+如果你想回滾或需要更多優化（例如：將 `SentimentModel` 轉為推論 API、緩存模型預測、或替換更輕量級模型），我可以接著實作。

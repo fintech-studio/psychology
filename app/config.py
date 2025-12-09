@@ -15,5 +15,15 @@ GEMINI_MAX_TOKENS = 150
 GEMINI_ADVICE_TEMPERATURE = 0.7
 GEMINI_ADVICE_MAX_TOKENS = 1024
 
+# Ollama local deployment settings (used to replace Gemini locally)
+OLLAMA_API_URL = "http://127.0.0.1:11434"  # default ollama local API address
+OLLAMA_MODEL_NAME = "llama3.1:8b"  # please set to your local model name
+OLLAMA_TEMPERATURE = 0.8
+OLLAMA_MAX_TOKENS = 150
+OLLAMA_ADVICE_TEMPERATURE = 0.7
+OLLAMA_ADVICE_MAX_TOKENS = 1024
+# Optional model fallbacks to try if the configured model cannot be found/reached
+OLLAMA_MODEL_FALLBACKS = ["llama3.1:8b", "llama3.1:7b", "llama-3:8b"]
+
 # 分析設定
 ENABLE_CONTEXT_ANALYSIS = True  # 是否啟用上下文分析（問題+回答）
