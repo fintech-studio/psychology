@@ -48,7 +48,12 @@ class QuestionnaireService:
         # 如果問題還沒生成，返回 None（需要動態生成）
         return None
 
-    def save_generated_question(self, session_id: str, question: str) -> bool:
+    def save_generated_question(
+        self,
+        session_id: str,
+        question: str,
+        index: int | None = None,
+    ) -> bool:
         """儲存動態生成的問題"""
         with self.sessions_lock:
             session = self.sessions.get(session_id)
@@ -56,6 +61,8 @@ class QuestionnaireService:
                 return False
 
             current_index = session["current_question"]
+            if index is not None and isinstance(index, int) and index >= 0:
+                current_index = index
             questions = session["questions"]
 
             # 確保 questions 列表足夠長，填充空位置

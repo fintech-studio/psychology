@@ -10,8 +10,6 @@ from config import (
     OLLAMA_API_URL,
     OLLAMA_MODEL_NAME,
     OLLAMA_MODEL_FALLBACKS,
-    OLLAMA_TEMPERATURE,
-    OLLAMA_MAX_TOKENS,
     OLLAMA_ADVICE_TEMPERATURE,
     OLLAMA_ADVICE_MAX_TOKENS,
 )
@@ -24,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 class GeminiService:
     def __init__(self):
-        # Ollama runs locally and does not require an API key. Check reachability in async init
+        # Ollama runs locally and does not require an API key.
+        # Check reachability in async init
         self.ollama_url = os.getenv("OLLAMA_API_URL", OLLAMA_API_URL)
         self.model_name = os.getenv("OLLAMA_MODEL_NAME", OLLAMA_MODEL_NAME)
         self.api_available = False
@@ -42,8 +41,12 @@ class GeminiService:
         try:
             # Health check: try configured model then fallbacks
             logger.debug("Performing Ollama health check: %s", self.ollama_url)
-            payload = {"model": self.model_name, "prompt": "ping", "max_tokens": 1}
-            r = await self._http_client.post(f"{self.ollama_url}/api/generate", json=payload)
+            payload = {"model": self.model_name,
+                       "prompt": "ping",
+                       "max_tokens": 1}
+            r = await self._http_client.post(
+                f"{self.ollama_url}/api/generate",
+                json=payload)
             logger.debug("Health check status: %s", r.status_code)
             if r.status_code == 200:
                 self.api_available = True
@@ -54,11 +57,16 @@ class GeminiService:
             self.api_available = False
 
         if not self.api_available:
-            logger.debug("Configured model '%s' not available, trying fallbacks: %s", self.model_name, OLLAMA_MODEL_FALLBACKS)
+            logger.debug(
+                "Configured model '%s' not available, trying fallbacks: %s",
+                self.model_name, OLLAMA_MODEL_FALLBACKS)
             for fallback in OLLAMA_MODEL_FALLBACKS:
                 try:
-                    payload = {"model": fallback, "prompt": "ping", "max_tokens": 1}
-                    r = await self._http_client.post(f"{self.ollama_url}/api/generate", json=payload)
+                    payload = {"model": fallback,
+                               "prompt": "ping",
+                               "max_tokens": 1}
+                    r = await self._http_client.post(
+                        f"{self.ollama_url}/api/generate", json=payload)
                     if r.status_code == 200:
                         self.model_name = fallback
                         self.api_available = True
@@ -68,9 +76,12 @@ class GeminiService:
                     continue
 
         if self.api_available:
-            logger.info("Ollama local API available: %s, model: %s", self.ollama_url, self.model_name)
+            logger.info(
+                "Ollama local API available: %s, model: %s",
+                self.ollama_url, self.model_name)
         else:
-            logger.warning("Ollama API not available, using local fallback responses")
+            logger.warning(
+                "Ollama API not available, using local fallback responses")
         self._health_checked = True
 
     async def shutdown(self):
@@ -79,22 +90,29 @@ class GeminiService:
             await self._http_client.aclose()
             self._http_client = None
 
-    async def _call_ollama_generate(self, prompt: str, model_name: str = None, timeout: int = 10) -> tuple[str, bool]:
-        """Call the Ollama generate endpoint for `model_name` and return the concatenated body text (response|thinking|text|content).
+    async def _call_ollama_generate(
+        self, prompt: str, model_name: str = None, timeout: int = 10
+            ) -> tuple[str, bool]:
+        """Call the Ollama generate endpoint for `model_name`
+        and return the concatenated body text (response|thinking|text|content).
         Returns empty string if nothing can be extracted or on error.
         """
         model = model_name if model_name else self.model_name
         if self._http_client is None:
             self._http_client = httpx.AsyncClient(timeout=timeout)
         try:
-            payload = {"model": model, "prompt": prompt, "temperature": OLLAMA_ADVICE_TEMPERATURE, "max_tokens": OLLAMA_ADVICE_MAX_TOKENS}
+            payload = {"model": model,
+                       "prompt": prompt,
+                       "temperature": OLLAMA_ADVICE_TEMPERATURE,
+                       "max_tokens": OLLAMA_ADVICE_MAX_TOKENS}
             # Basic retry loop for transient network issues
             retries = 3
             backoff = 0.5
             resp = None
             for attempt in range(retries):
                 try:
-                    resp = await self._http_client.post(f"{self.ollama_url}/api/generate", json=payload)
+                    resp = await self._http_client.post(
+                        f"{self.ollama_url}/api/generate", json=payload)
                     break
                 except (httpx.HTTPError, httpx.ConnectError) as e:
                     logger.debug("Attempt %s failed: %s", attempt + 1, e)
@@ -103,14 +121,24 @@ class GeminiService:
                         continue
                     raise
             # Basic logging
-            logger.debug("Ollama generate endpoint returned: %s", resp.status_code)
+            logger.debug(
+                "Ollama generate endpoint returned: %s", resp.status_code)
             try:
-                logger.debug("Ollama response body (first 1024 chars): %s", resp.text[:1024])
+                logger.debug(
+                    "Ollama response body (first 1024 chars): %s",
+                    (resp.text or "")[:1024],
+                )
             except Exception:
                 logger.debug("Cannot print Ollama response body")
             if resp is None:
                 raise RuntimeError("No response from Ollama API")
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except Exception:
+                logger.exception(
+                    "Ollama generate returned HTTP error: status=%s body=%s",
+                    resp.status_code, (resp.text or '')[:1024])
+                raise
             # try parse full json first
             try:
                 rjson = resp.json()
@@ -121,7 +149,8 @@ class GeminiService:
             if not rjson:
                 # streaming style: JSON lines
                 try:
-                    lines = [l for l in resp.text.splitlines() if l.strip()]
+                    lines = [line_str for line_str in resp.text.splitlines()
+                             if line_str.strip()]
                     for line in lines:
                         try:
                             obj = json.loads(line)
@@ -131,7 +160,8 @@ class GeminiService:
                             if 'response' in obj and obj.get('response'):
                                 out += obj.get('response', '')
                                 has_response_field = True
-                            elif 'content' in obj and isinstance(obj['content'], str):
+                            elif 'content' in obj and (
+                                    isinstance(obj['content'], str)):
                                 out += obj['content']
                             elif 'text' in obj:
                                 out += obj.get('text', '')
@@ -159,7 +189,7 @@ class GeminiService:
                         out = rjson.get('response', '')
                         has_response_field = True
             return out.strip(), has_response_field
-        except Exception as e:
+        except Exception:
             logger.exception("Ollama API error while calling model=%s", model)
             return "", False
 
@@ -168,6 +198,8 @@ class GeminiService:
                                         previous_responses: List[Dict] = None
                                         ) -> str:
         """動態生成問題內容，並確保回傳能被前端辨識類型（MC / Likert / open）"""
+        logger.debug("generate_dynamic_question called: current=%s total=%s",
+                     current_number, total_questions)
         # 題型輪替：1 情緒反應 (mc)，2 壓力感知 (likert)，3 風險偏好 (mc)，4 決策習慣 (mc 多選或開放)
         # 使用輪替以保證問卷包含多種類型
         qtype_cycle = (current_number - 1) % 4
@@ -229,13 +261,6 @@ class GeminiService:
         try:
             # ensure `question` is defined to avoid UnboundLocalError
             question = ""
-            # Call Ollama local API
-            payload = {
-                "model": self.model_name,
-                "prompt": prompt,
-                "temperature": OLLAMA_TEMPERATURE,
-                "max_tokens": OLLAMA_MAX_TOKENS,
-            }
             # Use _call_ollama_generate to unify streaming and JSON handling
             resp_text, _ = await self._call_ollama_generate(prompt)
             resp_json = None
@@ -246,7 +271,8 @@ class GeminiService:
             # If response is JSON lines / streaming, parse by lines
             if not resp_json:
                 try:
-                    lines = [l for l in resp_text.splitlines() if l.strip()]
+                    lines = [line_str for line_str in resp_text.splitlines()
+                             if line_str.strip()]
                     for line in lines:
                         try:
                             obj = json.loads(line)
@@ -256,19 +282,23 @@ class GeminiService:
                         if isinstance(obj, dict):
                             if 'response' in obj and obj.get('response'):
                                 question += obj.get('response', '')
-                            elif 'content' in obj and isinstance(obj['content'], str):
+                            elif 'content' in obj and (
+                                    isinstance(obj['content'], str)):
                                 question += obj['content']
                             elif 'text' in obj:
                                 question += obj.get('text', '')
                             elif 'thinking' in obj:
                                 question += obj.get('thinking', '')
-                except Exception as _:
+                except Exception:
                     pass
-            logger.debug("Ollama JSON payload keys: %s", list(resp_json.keys()) if isinstance(resp_json, dict) else type(resp_json))
+            logger.debug("Ollama JSON payload keys: %s", list(resp_json.keys())
+                         if isinstance(resp_json, dict) else type(resp_json))
             # keep parsed streaming `question` if present, do not reset
-            # Try to extract the text content robustly from varying response shapes
+            # Try to extract the text content robustly
+            # from varying response shapes
             if isinstance(resp_json, dict):
-                if 'content' in resp_json and isinstance(resp_json['content'], list):
+                if 'content' in resp_json and isinstance(
+                        resp_json['content'], list):
                     content = resp_json['content']
                     if isinstance(content, list):
                         for item in content:
@@ -283,6 +313,8 @@ class GeminiService:
                 elif 'output' in resp_json:
                     question = resp_json.get('output', '')
             question = str(question).strip()
+            logger.debug("generated question (len=%s): %s",
+                         len(question), question[:250])
             # 移除常見的引號或多餘符號
             if question:
                 question = (question.replace('"', '')
@@ -419,29 +451,42 @@ class GeminiService:
         print("=" * 50)
 
         try:
-            # Call helper to get the combined advice text (handles streaming & json)
+            # Call helper to get the combined advice text
+            # (handles streaming & json)
             advice, has_response = await self._call_ollama_generate(prompt)
             if not advice:
-                # if this model produced nothing, try fallback models if available
+                # if this model produced nothing,
+                # try fallback models if available
                 for fallback in OLLAMA_MODEL_FALLBACKS:
-                    advice, has_response = await self._call_ollama_generate(prompt, model_name=fallback)
-                    print(f"Debug - tried fallback {fallback}, advice length: {len(advice)} has_response: {has_response}")
+                    advice, has_response = await self._call_ollama_generate(
+                        prompt, model_name=fallback)
+                    print(f"Debug - tried fallback {fallback}, "
+                          f"advice length: {len(advice)} "
+                          f"has_response: {has_response}")
                     if advice:
-                        print(f"Debug - using fallback model for advice: {fallback}")
-                        # update service model_name to use fallback for subsequent calls
+                        print(f"Debug - using fallback model "
+                              f"for advice: {fallback}")
+                        # update service model_name to use fallback
+                        # for subsequent calls
                         self.model_name = fallback
                         break
-            # If the selected model only returned chain-of-thought (no response field), try fallbacks
+            # If the selected model only returned chain-of-thought
+            # (no response field), try fallbacks
             if not has_response and advice:
                 for fallback in OLLAMA_MODEL_FALLBACKS:
                     if fallback == self.model_name:
                         continue
-                    f_advice, f_has_response = await self._call_ollama_generate(prompt, model_name=fallback)
-                    print(f"Debug - checking fallback {fallback} for has_response: length {len(f_advice)} got_response {f_has_response}")
+                    f_advice, f_has_response = await (
+                        self._call_ollama_generate(
+                            prompt, model_name=fallback))
+                    print(f"Debug - checking fallback {fallback} for "
+                          f"has_response: length {len(f_advice)} "
+                          f"got_response {f_has_response}")
                     if f_advice and f_has_response:
                         advice = f_advice
                         has_response = True
-                        print(f"Debug - swapped to fallback model {fallback} because original returned no response field")
+                        print(f"Debug - swapped to fallback model {fallback} "
+                              f"because original returned no response field")
                         self.model_name = fallback
                         break
             if advice:

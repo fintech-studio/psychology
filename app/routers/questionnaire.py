@@ -19,17 +19,26 @@ async def start_questionnaire() -> StartResponse:
     """開始問卷調查"""
     try:
         session_id = questionnaireService.create_session()
+        logger.info("新會話建立：%s", session_id)
 
-        # 動態生成第一個問題
-        first_question = await geminiService.generate_dynamic_question(
-            current_number=1,
-            total_questions=TOTAL_QUESTIONS,
-            previous_responses=None
+        # 動態生成第一個問題，若發生例外則使用後備題目
+        try:
+            first_question = await geminiService.generate_dynamic_question(
+                current_number=1,
+                total_questions=TOTAL_QUESTIONS,
+                previous_responses=None,
+            )
+        except Exception as e:
+            # 已有更詳細的例外紀錄於 geminiService 中，這裡保留一個簡短的備援問句
+            logger.exception("在生成第一題時發生錯誤，改用後備題目: %s", e)
+            first_question = "當股市短期波動時，您會採取什麼樣的行為？ 冷靜觀望 / 減碼 / 加碼"
+
+        # 保存生成的問題（若儲存失敗也要登記錯誤，使除錯容易）
+        saved = questionnaireService.save_generated_question(
+            session_id, first_question
         )
-
-        # 保存生成的問題
-        questionnaireService.save_generated_question(
-            session_id, first_question)
+        if not saved:
+            logger.warning("無法儲存第一題到會話 %s", session_id)
 
         return StartResponse(
             session_id=session_id,
@@ -124,23 +133,31 @@ async def stream_question(request: StreamQuestionRequest):
         progress = questionnaireService.get_progress(request.session_id)
         all_responses = questionnaireService.get_all_responses(
             request.session_id)
+        # Allow overriding the generation index if client provided
+        # a `question_number` parameter.
+        # This enables client-side regeneration of the current/next question.
+        target_number = request.question_number or (progress["current"] + 1)
 
         async def generate_stream():
             async for chunk in geminiService.stream_question_generation(
-                progress["current"] + 1,
+                target_number,
                 TOTAL_QUESTIONS,
                 all_responses
             ):
                 # 如果問題生成完成，保存問題到會話
                 if chunk.get("done") and chunk.get("question"):
+                    # save at the target index (convert 1-based to 0-based)
                     questionnaireService.save_generated_question(
-                        request.session_id, chunk["question"])
+                        request.session_id,
+                        chunk["question"],
+                        index=target_number - 1,
+                    )
 
                 yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
         return StreamingResponse(
             generate_stream(),
-            media_type="text/plain"
+            media_type="text/event-stream; charset=utf-8"
         )
 
     except HTTPException:
@@ -166,6 +183,12 @@ async def save_question(request: SaveQuestionRequest) -> Dict[str, Any]:
             )
         )
 
+        success = questionnaireService.save_response(
+            request.session_id,
+            request.answer,
+            sentiment_scores,
+            stress_scores
+        )
         success = questionnaireService.save_response(
             request.session_id,
             request.answer,
