@@ -2,6 +2,7 @@ from typing import Dict, List, Optional
 import uuid
 import threading
 import logging
+import re
 from config import TOTAL_QUESTIONS
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,34 @@ class QuestionnaireService:
 
             # 在正確的索引位置儲存問題
             questions[current_index] = question
+            # 修正 placeholder 選項（若出現選擇A/選擇B 類型）以避免存到前端
+            try:
+                # detect '選擇A' style placeholders or single-letter options
+                if (
+                    re.search(r"\b(選擇|選項)\s*[A-D]\b", question)
+                    or re.search(r"\b[A-D]\b\s*/\s*\b[A-D]\b", question)
+                ):
+                    # determine qtype from index
+                    qtype_cycle = (current_index) % 4
+                    if qtype_cycle == 0:
+                        question = (
+                            "當股市短期暴跌 10% 時，您通常會怎麼做？ 冷靜觀望 / 想立刻賣出 / 加碼買進"
+                        )
+                    elif qtype_cycle == 1:
+                        question = (
+                            "在投資時，您多久會感到焦慮？請以 1 到 5 評分（1=從不，5=非常常）"
+                        )
+                    elif qtype_cycle == 2:
+                        question = (
+                            "您偏好哪種投資風格？ 高風險高報酬 / 穩健中報酬 / 低風險低報酬"
+                        )
+                    else:
+                        question = (
+                            "您通常如何做出投資決策？ 分析公司基本面 / 聽從市場情緒 / 定期定額 / 朋友推薦"
+                        )
+                    questions[current_index] = question
+            except Exception:
+                pass
             # print(f"🔍 儲存問題到索引 {current_index}: {question[:50]}...")
 
             return True

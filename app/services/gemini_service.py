@@ -1,8 +1,10 @@
 import asyncio
 import os
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 import json
+import re
 import logging
+import random
 import httpx
 from dotenv import load_dotenv
 from config import (
@@ -108,16 +110,20 @@ class GeminiService:
             # Basic retry loop for transient network issues
             retries = 3
             backoff = 0.5
+            max_backoff = 5.0
             resp = None
             for attempt in range(retries):
                 try:
                     resp = await self._http_client.post(
                         f"{self.ollama_url}/api/generate", json=payload)
                     break
-                except (httpx.HTTPError, httpx.ConnectError) as e:
+                except (httpx.RequestError, httpx.ConnectError) as e:
                     logger.debug("Attempt %s failed: %s", attempt + 1, e)
                     if attempt < retries - 1:
-                        await asyncio.sleep(backoff * (2 ** attempt))
+                        # exponential backoff with jitter
+                        delay = min(max_backoff, backoff * (2 ** attempt))
+                        delay = delay * (0.8 + random.random() * 0.4)
+                        await asyncio.sleep(delay)
                         continue
                     raise
             # Basic logging
@@ -139,59 +145,148 @@ class GeminiService:
                     "Ollama generate returned HTTP error: status=%s body=%s",
                     resp.status_code, (resp.text or '')[:1024])
                 raise
-            # try parse full json first
-            try:
-                rjson = resp.json()
-            except Exception:
-                rjson = None
-            out = ""
-            has_response_field = False
-            if not rjson:
-                # streaming style: JSON lines
-                try:
-                    lines = [line_str for line_str in resp.text.splitlines()
-                             if line_str.strip()]
-                    for line in lines:
-                        try:
-                            obj = json.loads(line)
-                        except Exception:
-                            continue
-                        if isinstance(obj, dict):
-                            if 'response' in obj and obj.get('response'):
-                                out += obj.get('response', '')
-                                has_response_field = True
-                            elif 'content' in obj and (
-                                    isinstance(obj['content'], str)):
-                                out += obj['content']
-                            elif 'text' in obj:
-                                out += obj.get('text', '')
-                            elif 'thinking' in obj:
-                                out += obj.get('thinking', '')
-                except Exception:
-                    pass
-            else:
-                if isinstance(rjson, dict):
-                    if 'content' in rjson:
-                        c = rjson['content']
-                        if isinstance(c, list):
-                            for item in c:
-                                if isinstance(item, dict) and 'text' in item:
-                                    out += item['text']
-                                elif isinstance(item, str):
-                                    out += item
-                        elif isinstance(c, str):
-                            out = c
-                    elif 'text' in rjson:
-                        out = rjson.get('text', '')
-                    elif 'output' in rjson:
-                        out = rjson.get('output', '')
-                    elif 'response' in rjson:
-                        out = rjson.get('response', '')
-                        has_response_field = True
-            return out.strip(), has_response_field
+            # extract response text field(s) robustly using helper
+            out, has_response_field = \
+                self._extract_text_from_response(resp.text)
+            return out, has_response_field
         except Exception:
             logger.exception("Ollama API error while calling model=%s", model)
             return "", False
+
+    def _extract_text_from_response(self, raw_text: str) -> Tuple[str, bool]:
+        """Parse a raw response string that could be streaming JSON lines
+        or plain text JSON and return a concatenated text and whether a
+        'response' field was present.
+        """
+        if not raw_text:
+            return "", False
+        # Try parse as JSON object first
+        try:
+            obj = json.loads(raw_text)
+        except Exception:
+            obj = None
+
+        out = ""
+        has_response = False
+        if isinstance(obj, dict):
+            if 'response' in obj and obj.get('response'):
+                out += obj.get('response', '')
+                has_response = True
+            elif 'content' in obj:
+                c = obj['content']
+                if isinstance(c, list):
+                    for item in c:
+                        if isinstance(item, dict) and 'text' in item:
+                            out += item['text']
+                        elif isinstance(item, str):
+                            out += item
+                elif isinstance(c, str):
+                    out += c
+            elif 'text' in obj:
+                out += obj.get('text', '')
+            elif 'output' in obj:
+                out += obj.get('output', '')
+            return out.strip(), has_response
+
+        # If not JSON object, parse by lines and try to load JSON per line
+        try:
+            for line in raw_text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    out += line + "\n"
+                    continue
+                if isinstance(item, dict):
+                    if 'response' in item and item.get('response'):
+                        out += item.get('response', '')
+                        has_response = True
+                    elif (
+                        'content' in item
+                        and isinstance(item['content'], str)
+                    ):
+                        out += item['content']
+                    elif 'text' in item:
+                        out += item.get('text', '')
+                    elif 'thinking' in item:
+                        out += item.get('thinking', '')
+        except Exception:
+            pass
+        return out.strip(), has_response
+
+    def _sanitize_text(self, s: Optional[str]) -> str:
+        if not s:
+            return ""
+        txt = str(s)
+        txt = txt.replace('"', '').replace("'", '').replace('*', '')
+        txt = "\n".join(
+            [line.strip() for line in txt.splitlines() if line.strip()]
+        )
+        return txt
+
+    def _contains_placeholder_options(self, question: str) -> bool:
+        """Detect if the provided question contains placeholder options like
+        '選擇A', '選項A', 'A / B / C', 'Option A / Option B' etc.
+        Returns True if placeholders are detected.
+        """
+        if not question or "/" not in question:
+            return False
+        parts = [p.strip() for p in question.split("/") if p.strip()]
+        if len(parts) < 2:
+            return False
+        placeholder_count = 0
+        for p in parts:
+            # single letter options (A, B, C) or letter in parentheses or dots
+            if len(p) == 1 and p.isalpha() and p.upper() in "ABCD":
+                placeholder_count += 1
+                continue
+            # Matches '選擇A' / '選項A' / '選A'
+            if any(
+                p.startswith(pref) and len(p.strip()) <= 4
+                for pref in ["選擇", "選項", "選"]
+            ):
+                placeholder_count += 1
+                continue
+            # Matches 'Option A' or '選項 A'
+            if (
+                p.lower().startswith("option")
+                and any(ch.isalpha() for ch in p)
+            ):
+                placeholder_count += 1
+                continue
+        # if most or all options seem placeholders, return True
+        result_bool = placeholder_count >= max(1, len(parts) // 2)
+        logger.debug(
+            "Placeholder detection: placeholders=%s parts=%s",
+            result_bool,
+            len(parts),
+        )
+        return result_bool
+
+    def _strip_placeholder_options(self, question: str) -> str:
+        """Remove common placeholder option tokens from a question string."""
+        if not question or "/" not in question:
+            return question
+        # Remove tokens like '選擇A', '選項A', 'Option A'
+        # and lone letters like 'A / B / C'
+        # Replace them and then cleanup duplicate slashes and extra whitespace
+        q = re.sub(r"(?:選擇|選項)?\s*[A-D]", "", question)
+        q = re.sub(r"Option\s*[A-D]", "", q, flags=re.IGNORECASE)
+        # Remove any leftover isolated letter options like 'A / B / C'
+        q = re.sub(r"\b[A-D]\b", "", q)
+        # Clean up repeated slashes / extra spaces
+        q = re.sub(r"\s*/\s*", " / ", q).strip()
+        # Remove trailing slashes or punctuation related to options
+        q = re.sub(r"[\s/]*$", "", q)
+        q = q.strip()
+        logger.debug(
+            "Stripped placeholder options: '%s' -> '%s'",
+            question[:200],
+            q[:200],
+        )
+        return q
 
     async def generate_dynamic_question(self, current_number: int,
                                         total_questions: int,
@@ -213,6 +308,15 @@ class GeminiService:
             qtype = "decision_mc"    # 決策習慣，多選或單選描述性選項
 
         # 如果 Ollama API 無法使用，回傳明確格式的 fallback 題目（包含選項或 Likert 指示）
+        # Ensure we checked API health, try to init if not checked
+        if not self._health_checked:
+            try:
+                await self.init()
+            except Exception:
+                logger.debug(
+                    "Failed to init/health check; using fallback responses"
+                )
+
         if not self.api_available:
             if qtype == "emotion_mc":
                 return "當股市短期暴跌 10% 時，您通常會怎麼做？ 冷靜觀望 / 想立刻賣出 / 加碼買進"
@@ -263,71 +367,29 @@ class GeminiService:
             question = ""
             # Use _call_ollama_generate to unify streaming and JSON handling
             resp_text, _ = await self._call_ollama_generate(prompt)
-            resp_json = None
-            try:
-                resp_json = json.loads(resp_text)
-            except Exception:
-                resp_json = None
-            # If response is JSON lines / streaming, parse by lines
-            if not resp_json:
-                try:
-                    lines = [line_str for line_str in resp_text.splitlines()
-                             if line_str.strip()]
-                    for line in lines:
-                        try:
-                            obj = json.loads(line)
-                        except Exception:
-                            continue
-                        # extract probable fields from obj
-                        if isinstance(obj, dict):
-                            if 'response' in obj and obj.get('response'):
-                                question += obj.get('response', '')
-                            elif 'content' in obj and (
-                                    isinstance(obj['content'], str)):
-                                question += obj['content']
-                            elif 'text' in obj:
-                                question += obj.get('text', '')
-                            elif 'thinking' in obj:
-                                question += obj.get('thinking', '')
-                except Exception:
-                    pass
-            logger.debug("Ollama JSON payload keys: %s", list(resp_json.keys())
-                         if isinstance(resp_json, dict) else type(resp_json))
-            # keep parsed streaming `question` if present, do not reset
-            # Try to extract the text content robustly
-            # from varying response shapes
-            if isinstance(resp_json, dict):
-                if 'content' in resp_json and isinstance(
-                        resp_json['content'], list):
-                    content = resp_json['content']
-                    if isinstance(content, list):
-                        for item in content:
-                            if isinstance(item, dict) and 'text' in item:
-                                question += item.get('text', '')
-                            elif isinstance(item, str):
-                                question += item
-                    elif isinstance(content, str):
-                        question = content
-                elif 'text' in resp_json:
-                    question = resp_json.get('text', '')
-                elif 'output' in resp_json:
-                    question = resp_json.get('output', '')
-            question = str(question).strip()
-            logger.debug("generated question (len=%s): %s",
-                         len(question), question[:250])
+            # extract combined text and whether response field was present
+            question, _ = self._extract_text_from_response(resp_text)
+            logger.debug(
+                "generated question raw (len=%s)", len(question)
+            )
+            # Ensure question is sanitized
+            question = self._sanitize_text(question)
+            logger.debug(
+                "generated question (len=%s): %s",
+                len(question),
+                (question or '')[:250],
+            )
             # 移除常見的引號或多餘符號
-            if question:
-                question = (question.replace('"', '')
-                            .replace("'", '')
-                            .replace('*', ''))
-                # 去掉前後多餘空白或換行
-                question = ("\n".join([line.strip()
-                                       for line in question.splitlines()
-                                       if line.strip()]))
+            # question already sanitized by _sanitize_text
 
             # 若生成結果未包含預期格式，補上預設選項或 Likert 提示
             if qtype == "emotion_mc":
-                if "/" not in question:
+                if (
+                    "/" not in question
+                    or self._contains_placeholder_options(question)
+                ):
+                    if self._contains_placeholder_options(question):
+                        question = self._strip_placeholder_options(question)
                     if question:
                         question = f"{question} 冷靜觀望 / 想立刻賣出 / 加碼買進"
                     else:
@@ -347,12 +409,22 @@ class GeminiService:
                             "請以 1 到 5 評分（1=從不，5=非常常）"
                         )
             elif qtype == "risk_mc":
-                if "/" not in question:
+                if (
+                    "/" not in question
+                    or self._contains_placeholder_options(question)
+                ):
+                    if self._contains_placeholder_options(question):
+                        question = self._strip_placeholder_options(question)
                     question = (f"{question} 高風險高報酬 / 穩健中報酬 / 低風險低報酬"
                                 if question
                                 else "您偏好哪種投資風格？ 高風險高報酬 / 穩健中報酬 / 低風險低報酬")
             else:  # decision_mc
-                if "/" not in question and "\n" not in question:
+                if (
+                    ("/" not in question and "\n" not in question)
+                    or self._contains_placeholder_options(question)
+                ):
+                    if self._contains_placeholder_options(question):
+                        question = self._strip_placeholder_options(question)
                     question = (f"{question} 分析公司基本面 / 聽從市場情緒 / 定期定額 / 朋友推薦"
                                 if question
                                 else ("您通常如何做出投資決策？ 分析公司基本面 / 聽從市場情緒 / "
@@ -392,6 +464,15 @@ class GeminiService:
 
     async def generate_content(self, all_responses: List[Dict]) -> str:
         """生成最終建議（移除壓力分數聚合，僅使用情緒與問答摘要）"""
+        # Ensure service health checked
+        if not self._health_checked:
+            try:
+                await self.init()
+            except Exception:
+                logger.debug(
+                    "Failed to init/health check; using fallback responses"
+                )
+
         if not self.api_available:
             return (
                 "根據您的回答，建議您：1) 建立規律的壓力管理習慣 "
@@ -446,9 +527,9 @@ class GeminiService:
         """
 
         # Debug: 印出傳給 Ollama 的完整內容
-        print(f"Debug - 回答數量: {response_count}")
-        print(f"Debug - 傳給 Ollama 的 prompt:\n{prompt}")
-        print("=" * 50)
+        logger.debug("Debug - 回答數量: %s", response_count)
+        logger.debug("Debug - 傳給 Ollama 的 prompt:\n%s", prompt)
+        logger.debug("%s", "=" * 50)
 
         try:
             # Call helper to get the combined advice text
@@ -460,12 +541,17 @@ class GeminiService:
                 for fallback in OLLAMA_MODEL_FALLBACKS:
                     advice, has_response = await self._call_ollama_generate(
                         prompt, model_name=fallback)
-                    print(f"Debug - tried fallback {fallback}, "
-                          f"advice length: {len(advice)} "
-                          f"has_response: {has_response}")
+                    logger.debug(
+                        "Fallback tried: %s len=%s has_resp=%s",
+                        fallback,
+                        len(advice),
+                        has_response,
+                    )
                     if advice:
-                        print(f"Debug - using fallback model "
-                              f"for advice: {fallback}")
+                        logger.debug(
+                            "Debug - using fallback model for advice: %s",
+                            fallback,
+                        )
                         # update service model_name to use fallback
                         # for subsequent calls
                         self.model_name = fallback
@@ -479,21 +565,28 @@ class GeminiService:
                     f_advice, f_has_response = await (
                         self._call_ollama_generate(
                             prompt, model_name=fallback))
-                    print(f"Debug - checking fallback {fallback} for "
-                          f"has_response: length {len(f_advice)} "
-                          f"got_response {f_has_response}")
+                    logger.debug(
+                        "Checking fallback: %s len=%s got_resp=%s",
+                        fallback,
+                        len(f_advice),
+                        f_has_response,
+                    )
                     if f_advice and f_has_response:
                         advice = f_advice
                         has_response = True
-                        print(f"Debug - swapped to fallback model {fallback} "
-                              f"because original returned no response field")
+                        logger.debug(
+                            "Swapped to fallback model %s because original has"
+                            " no response field",
+                            fallback,
+                        )
                         self.model_name = fallback
                         break
             if advice:
-                clean_advice = str(advice).replace("**", "").replace("*", "")
+                clean_advice = self._sanitize_text(str(advice))
+                clean_advice = clean_advice.replace("**", "").replace("*", "")
                 return clean_advice.strip()
             else:
-                print("Debug - Ollama returned no advice text")
+                logger.debug("Debug - Ollama returned no advice text")
                 return "(系統暫時無法生成回應，請稍後再試)"
         except Exception as e:
             logger.exception("Ollama API 錯誤: %s", e)
