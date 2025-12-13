@@ -72,34 +72,22 @@ class QuestionnaireService:
 
             # 在正確的索引位置儲存問題
             questions[current_index] = question
-            # 修正 placeholder 選項（若出現選擇A/選擇B 類型）以避免存到前端
+            # If question contains placeholder tokens like '選擇A' or single-letter options,
+            # sanitize by stripping placeholder tokens but do not replace with predefined examples.
             try:
-                # detect '選擇A' style placeholders or single-letter options
                 if (
                     re.search(r"\b(選擇|選項)\s*[A-D]\b", question)
                     or re.search(r"\b[A-D]\b\s*/\s*\b[A-D]\b", question)
                 ):
-                    # determine qtype from index
-                    qtype_cycle = (current_index) % 4
-                    if qtype_cycle == 0:
-                        question = (
-                            "當股市短期暴跌 10% 時，您通常會怎麼做？ 冷靜觀望 / 想立刻賣出 / 加碼買進"
-                        )
-                    elif qtype_cycle == 1:
-                        question = (
-                            "在投資時，您多久會感到焦慮？請以 1 到 5 評分（1=從不，5=非常常）"
-                        )
-                    elif qtype_cycle == 2:
-                        question = (
-                            "您偏好哪種投資風格？ 高風險高報酬 / 穩健中報酬 / 低風險低報酬"
-                        )
-                    else:
-                        question = (
-                            "您通常如何做出投資決策？ 分析公司基本面 / 聽從市場情緒 / 定期定額 / 朋友推薦"
-                        )
-                    questions[current_index] = question
+                    # remove tokens like '選擇A', '選項A' and single letters
+                    sanitized = re.sub(r"(?:選擇|選項)?\s*[A-D]", "", question)
+                    sanitized = re.sub(r"\b[A-D]\b", "", sanitized)
+                    sanitized = re.sub(r"\s*/\s*", " / ", sanitized).strip()
+                    # store sanitized question (no defaults injected)
+                    questions[current_index] = sanitized
+                    logger.debug("Sanitized placeholder question: %s -> %s", question, sanitized)
             except Exception:
-                pass
+                logger.exception("Failed to sanitize placeholder options for question: %s", question)
             # print(f"🔍 儲存問題到索引 {current_index}: {question[:50]}...")
 
             return True

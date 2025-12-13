@@ -31,32 +31,26 @@ class GeminiService:
         self.api_available = False
         self._health_checked = False
         self._http_client: httpx.AsyncClient | None = None
+        # No predefined question templates: always use AI to generate content
 
     async def init(self):
         """Perform async health check and prepare async http client.
 
         This function should be awaited during application startup.
         """
-        if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=10.0)
+        self._ensure_http_client(timeout=10)
 
-        try:
-            # Health check: try configured model then fallbacks
-            logger.debug("Performing Ollama health check: %s", self.ollama_url)
-            payload = {"model": self.model_name,
-                       "prompt": "ping",
-                       "max_tokens": 1}
-            r = await self._http_client.post(
-                f"{self.ollama_url}/api/generate",
-                json=payload)
-            logger.debug("Health check status: %s", r.status_code)
-            if r.status_code == 200:
-                self.api_available = True
-            else:
-                self.api_available = False
-        except Exception as e:
-            logger.debug("Health check failed for configured model: %s", e)
-            self.api_available = False
+        # Use dedicated health check logic
+        # Try configured model first, then fallbacks
+        logger.debug("Performing Ollama health check: %s", self.ollama_url)
+        ok = await self._health_check_model(self.model_name)
+        if not ok:
+            for fallback in OLLAMA_MODEL_FALLBACKS:
+                ok = await self._health_check_model(fallback)
+                if ok:
+                    self.model_name = fallback
+                    break
+        self.api_available = ok
 
         if not self.api_available:
             logger.debug(
@@ -86,11 +80,32 @@ class GeminiService:
                 "Ollama API not available, using local fallback responses")
         self._health_checked = True
 
+    def _ensure_http_client(self, timeout: int = 10) -> None:
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=timeout)
+
     async def shutdown(self):
         """Close http client on shutdown"""
         if self._http_client is not None:
             await self._http_client.aclose()
             self._http_client = None
+
+    async def _health_check_model(self, model: str) -> bool:
+        """Check a single model name for availability.
+
+        Returns True if API responds to a simple ping generate call.
+        """
+        self._ensure_http_client(timeout=10)
+        try:
+            payload = {"model": model, "prompt": "ping", "max_tokens": 1}
+            r = await self._http_client.post(
+                f"{self.ollama_url}/api/generate", json=payload
+            )
+            logger.debug("Model %s health check status=%s", model, r.status_code)
+            return r.status_code == 200
+        except Exception as e:
+            logger.debug("Model health check failed for %s: %s", model, e)
+            return False
 
     async def _call_ollama_generate(
         self, prompt: str, model_name: str = None, timeout: int = 10
@@ -100,8 +115,7 @@ class GeminiService:
         Returns empty string if nothing can be extracted or on error.
         """
         model = model_name if model_name else self.model_name
-        if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=timeout)
+        self._ensure_http_client(timeout=timeout)
         try:
             payload = {"model": model,
                        "prompt": prompt,
@@ -146,12 +160,16 @@ class GeminiService:
                     resp.status_code, (resp.text or '')[:1024])
                 raise
             # extract response text field(s) robustly using helper
-            out, has_response_field = \
-                self._extract_text_from_response(resp.text)
+            out, has_response_field = self._extract_text_from_response(resp.text)
+            # return the output and whether the response field was present
             return out, has_response_field
         except Exception:
             logger.exception("Ollama API error while calling model=%s", model)
             return "", False
+
+    def is_api_available(self) -> bool:
+        """Public accessor for API availability after health checks."""
+        return self.api_available
 
     def _extract_text_from_response(self, raw_text: str) -> Tuple[str, bool]:
         """Parse a raw response string that could be streaming JSON lines
@@ -225,6 +243,79 @@ class GeminiService:
             [line.strip() for line in txt.splitlines() if line.strip()]
         )
         return txt
+
+    def _build_prompt(self, qtype: str, current_number: int, total_questions: int) -> str:
+        """Build a prompt for the LLM based on a question type.
+        Keeps the generation constraints in one place.
+        """
+        if qtype == "emotion_mc":
+            instruct = (
+                "請生成一個情境式選擇題（繁體中文），要求回答者從列出的三個選項中選一個。"
+                " 請以單行輸出問題，並以「 / 」分隔選項。例如：問題文字 選項A / 選項B / 選項C。"
+                " 字數約 15-40 字。"
+            )
+        elif qtype == "stress_likert":
+            instruct = (
+                "請生成一個壓力感知題（繁體中文），並明確提示使用 Likert 1 到 5 評分，"
+                " 請在題目中包含「1 到 5」或「1-5」等字樣以利機器判別。"
+            )
+        elif qtype == "risk_mc":
+            instruct = (
+                "請生成一個風險偏好選擇題（繁體中文），並以「 / 」分隔三個選項"
+                " 題目約 10-30 字，只輸出題目與選項"
+            )
+        else:  # decision_mc
+            instruct = (
+                "請生成一個決策習慣題（繁體中文），可為單選或多選，輸出時以「 / 」或換行列出選項，"
+                "字數約 15-40 字。"
+            )
+        return f"你是一位理財顧問與心理評估專家。請根據下列要求生成第{current_number}題（共{total_questions}題）：\n{instruct}\n\n產出要求：\n- 只輸出題目本身，不要額外說明或編號。\n- 使用繁體中文。\n- 若為選擇題，選項請用「 / 」分隔（例如：選項A / 選項B / 選項C）。\n- 若為 Likert 題，題目中必須包含「1 到 5」或「1-5」等提示文字，方便前端判別。\n- 字數控制在 10-40 字左右。\n        "
+
+    async def _repair_placeholders(self, question: str, qtype: str, attempts: int = 2) -> str:
+        """Try to repair a generated question that contains placeholder options.
+
+        This function will ask the LLM to rewrite the question, replacing
+        placeholders like '選擇A' or 'A / B / C' with real options and ensuring
+        the appropriate format based on qtype.
+        Returns the repaired question string or raises RuntimeError on failure.
+        """
+        if not question:
+            raise RuntimeError("Empty question to repair")
+        # Build a repair prompt tailored to the qtype
+        if qtype in ("emotion_mc", "risk_mc", "decision_mc"):
+            repair_instruct = (
+                "上面問題包含像 '選擇A' 或 'A / B / C' 的佔位符。請將其替換為三個有意義、繁體中文的選項，\n"
+                "僅回傳修正後的單行題目，選項以 ' / ' 分隔，並保留原始問題意涵。"
+            )
+        elif qtype == "stress_likert":
+            repair_instruct = (
+                "上面問題未包含 Likert 1 到 5 的提示。請在題目中加入 '1 到 5' 或 '1-5' 的提示，\n"
+                "並僅回傳修正後的單行題目（保持繁體中文）。"
+            )
+        else:
+            repair_instruct = (
+                "請將問題修正為合適的格式，並以繁體中文回傳，若為選擇題請用 ' / ' 分隔選項。"
+            )
+
+        base_prompt = f"請修正以下問題：\n{question}\n\n{repair_instruct}\n只回傳題目本身。"
+
+        last_err = None
+        for i in range(attempts):
+            try:
+                repaired_text, _ = await self._call_ollama_generate(base_prompt)
+                repaired_text = self._sanitize_text(repaired_text)
+                if repaired_text and not self._contains_placeholder_options(repaired_text):
+                    # additional Likert check
+                    if qtype == "stress_likert" and ("1" not in repaired_text or "5" not in repaired_text):
+                        # not repaired properly; try again
+                        last_err = RuntimeError("Repaired Likert question still missing 1-5")
+                        continue
+                    return repaired_text
+                else:
+                    last_err = RuntimeError("Repaired question still contains placeholders or is empty")
+            except Exception as e:
+                last_err = e
+        raise RuntimeError(f"Failed to repair question: {last_err}")
 
     def _contains_placeholder_options(self, question: str) -> bool:
         """Detect if the provided question contains placeholder options like
@@ -318,14 +409,9 @@ class GeminiService:
                 )
 
         if not self.api_available:
-            if qtype == "emotion_mc":
-                return "當股市短期暴跌 10% 時，您通常會怎麼做？ 冷靜觀望 / 想立刻賣出 / 加碼買進"
-            if qtype == "stress_likert":
-                return "在投資時，您多久會感到焦慮？請以 1 到 5 評分（1=從不，5=非常常）"
-            if qtype == "risk_mc":
-                return "您偏好哪種投資風格？ 高風險高報酬 / 穩健中報酬 / 低風險低報酬"
-            # decision habit
-            return "您通常如何做出投資決策？（可複選）列出常見做法，例如：分析公司基本面 / 聽從市場情緒 / 定期定額 / 朋友推薦"
+            # Do not return predefined questions; require AI-generated content.
+            logger.error("AI model not available; cannot generate question for qtype=%s", qtype)
+            raise RuntimeError("AI model not available: cannot generate question")
 
         # 使用 Gemini 生成題目前，建立專用 prompt 強調輸出格式：
         if qtype == "emotion_mc":
@@ -350,17 +436,7 @@ class GeminiService:
                 "字數約 15-40 字。"
             )
 
-        prompt = f"""
-你是一位理財顧問與心理評估專家。請根據下列要求生成第{current_number}題（共{total_questions}題）：
-{instruct}
-
-產出要求：
-- 只輸出題目本身，不要額外說明或編號。
-- 使用繁體中文。
-- 若為選擇題，選項請用「 / 」分隔（例如：選項A / 選項B / 選項C）。
-- 若為 Likert 題，題目中必須包含「1 到 5」或「1-5」等提示文字，方便前端判別。
-- 字數控制在 10-40 字左右。
-        """
+        prompt = self._build_prompt(qtype, current_number, total_questions)
 
         try:
             # ensure `question` is defined to avoid UnboundLocalError
@@ -382,66 +458,52 @@ class GeminiService:
             # 移除常見的引號或多餘符號
             # question already sanitized by _sanitize_text
 
-            # 若生成結果未包含預期格式，補上預設選項或 Likert 提示
+            # Validate format but do not inject default options. Try AI-based repair on placeholders.
             if qtype == "emotion_mc":
-                if (
-                    "/" not in question
-                    or self._contains_placeholder_options(question)
-                ):
-                    if self._contains_placeholder_options(question):
-                        question = self._strip_placeholder_options(question)
-                    if question:
-                        question = f"{question} 冷靜觀望 / 想立刻賣出 / 加碼買進"
-                    else:
-                        question = (
-                            "當股市短期暴跌 10% 時，您通常會怎麼做？ "
-                            "冷靜觀望 / 想立刻賣出 / 加碼買進"
-                        )
+                # If the model didn't produce comma/ slash separated options, reject
+                if "/" not in question or self._contains_placeholder_options(question):
+                    logger.warning("Generated question contains placeholders or missing options for emotion_mc: %s. Attempting repair.", question)
+                    try:
+                        question = await self._repair_placeholders(question, qtype)
+                        logger.debug("Repaired emotion_mc question: %s", question)
+                    except Exception as e:
+                        logger.error("Repair failed for emotion_mc: %s", e)
+                        # fallback: raise error (no pre-written examples)
+                        raise
             elif qtype == "stress_likert":
                 if "1" not in question or "5" not in question:
-                    if question:
-                        question = (
-                            f"{question} 請以 1 到 5 評分（1=從不，5=非常常）"
-                        )
-                    else:
-                        question = (
-                            "在投資時，您多久會感到焦慮？"
-                            "請以 1 到 5 評分（1=從不，5=非常常）"
-                        )
+                    logger.warning("stress_likert missing Likert hints: %s. Attempting repair.", question)
+                    try:
+                        question = await self._repair_placeholders(question, qtype)
+                        logger.debug("Repaired stress_likert question: %s", question)
+                    except Exception as e:
+                        logger.error("Repair failed for stress_likert: %s", e)
+                        raise
             elif qtype == "risk_mc":
-                if (
-                    "/" not in question
-                    or self._contains_placeholder_options(question)
-                ):
-                    if self._contains_placeholder_options(question):
-                        question = self._strip_placeholder_options(question)
-                    question = (f"{question} 高風險高報酬 / 穩健中報酬 / 低風險低報酬"
-                                if question
-                                else "您偏好哪種投資風格？ 高風險高報酬 / 穩健中報酬 / 低風險低報酬")
+                if "/" not in question or self._contains_placeholder_options(question):
+                    logger.warning("Generated question contains placeholders or missing options for risk_mc: %s. Attempting repair.", question)
+                    try:
+                        question = await self._repair_placeholders(question, qtype)
+                        logger.debug("Repaired risk_mc question: %s", question)
+                    except Exception as e:
+                        logger.error("Repair failed for risk_mc: %s", e)
+                        raise
             else:  # decision_mc
-                if (
-                    ("/" not in question and "\n" not in question)
-                    or self._contains_placeholder_options(question)
-                ):
-                    if self._contains_placeholder_options(question):
-                        question = self._strip_placeholder_options(question)
-                    question = (f"{question} 分析公司基本面 / 聽從市場情緒 / 定期定額 / 朋友推薦"
-                                if question
-                                else ("您通常如何做出投資決策？ 分析公司基本面 / 聽從市場情緒 / "
-                                      "定期定額 / 朋友推薦"))
+                if ("/" not in question and "\n" not in question) or self._contains_placeholder_options(question):
+                    logger.warning("Generated question contains placeholders or missing options for decision_mc: %s. Attempting repair.", question)
+                    try:
+                        question = await self._repair_placeholders(question, qtype)
+                        logger.debug("Repaired decision_mc question: %s", question)
+                    except Exception as e:
+                        logger.error("Repair failed for decision_mc: %s", e)
+                        raise
 
             return question
 
         except Exception as e:
             logger.exception("動態問題生成錯誤: %s", e)
-            # 發生錯誤時使用更明確的 fallback（包含類型提示）
-            if qtype == "emotion_mc":
-                return "當股市短期暴跌 10% 時，您通常會怎麼做？ 冷靜觀望 / 想立刻賣出 / 加碼買進"
-            if qtype == "stress_likert":
-                return "在投資時，您多久會感到焦慮？請以 1 到 5 評分（1=從不，5=非常常）"
-            if qtype == "risk_mc":
-                return "您偏好哪種投資風格？ 高風險高報酬 / 穩健中報酬 / 低風險低報酬"
-            return "您通常如何做出投資決策？ 分析公司基本面 / 聽從市場情緒 / 定期定額 / 朋友推薦"
+            # Do not use pre-defined fallback questions. Propagate as error.
+            raise
 
     async def stream_question_generation(self, current_number: int,
                                          total_questions: int,
@@ -474,12 +536,8 @@ class GeminiService:
                 )
 
         if not self.api_available:
-            return (
-                "根據您的回答，建議您：1) 建立規律的壓力管理習慣 "
-                "2) 尋求適當的社會支持 "
-                "3) 學習正向的情緒調節技巧 "
-                "4) 保持健康的生活作息"
-            )
+            logger.error("AI model not available; cannot generate advice")
+            raise RuntimeError("AI model not available: cannot generate advice")
 
         # 構建分析摘要與情緒平均
         summary_lines = []
