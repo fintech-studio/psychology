@@ -1,25 +1,14 @@
 # 應用程式配置檔案
 
 # 問卷設定
-TOTAL_QUESTIONS = 4  # 問題總數，可以調整為任意數量
-MIN_QUESTIONS = 3    # 最少問題數
-MAX_QUESTIONS = 10   # 最多問題數
+TOTAL_QUESTIONS = 8  # 問題總數，可以調整為任意數量
 
 # 串流設定
 STREAM_DELAY = 0.03  # 字元間隔時間（秒）
 
-# API 設定
-GEMINI_MODEL_NAME = "gemini-2.0-flash"
-GEMINI_TEMPERATURE = 0.8
-GEMINI_MAX_TOKENS = 150
-GEMINI_ADVICE_TEMPERATURE = 0.7
-GEMINI_ADVICE_MAX_TOKENS = 1024
-
 # Ollama local deployment settings (used to replace Gemini locally)
 OLLAMA_API_URL = "http://172.25.1.24:11434"  # default ollama local API address
 OLLAMA_MODEL_NAME = "llama3.1:8b"  # please set to your local model name
-OLLAMA_TEMPERATURE = 0.8
-OLLAMA_MAX_TOKENS = 150
 OLLAMA_ADVICE_TEMPERATURE = 0.7
 OLLAMA_ADVICE_MAX_TOKENS = 1024
 # Optional model fallbacks to try if the configured model

@@ -209,3 +209,109 @@ class AnalysisService:
         if p["risk"] <= 40 and p["stability"] < 60:
             return "謹慎型（保守穩健）"
         return "綜合型（中庸平衡）"
+
+    def describe_investor(self, profile: Dict[str, int]) -> str:
+        """Return a short textual description based on investor profile."""
+        investor_type = self.classify_investor(profile)
+        if investor_type.startswith("波動型"):
+            return (
+                "您可能對短期價格波動較敏感，情緒波動會影響決策，需加強風險管理與情緒調節。"
+            )
+        if investor_type.startswith("探險型"):
+            return (
+                "您偏好高風險投資與高報酬，適合在資產中留有一部分承擔風險，並搭配風險分散策略。"
+            )
+        if investor_type.startswith("冷靜型"):
+            return (
+                "您在市場波動中能保持冷靜，較偏向理性決策，可利用長期策略提升投資報酬。"
+            )
+        if investor_type.startswith("謹慎型"):
+            return (
+                "您偏好保守穩健的投資，較少被情緒影響，適合以收益穩健、風險可控的配置為主。"
+            )
+        return (
+            "您的風險與穩定性影響衡平，建議依個人目標與時間視窗進一步制定投資策略。"
+        )
+
+    def compute_time_horizon(self, all_responses: List[Dict]) -> int:
+        """Estimate time-horizon preference from text answers (0..100, where 100 means very long-term)."""
+        score = 50
+        for r in all_responses:
+            q = (r.get("question") or "").lower()
+            a = (r.get("answer") or "").lower()
+            if any(k in q for k in ["長期", "長線", "退休", "長期投資"]):
+                score += 20
+            if any(k in a for k in ["長期", "長線", "退休", "長期投資"]):
+                score += 20
+            if any(k in q for k in ["短期", "短線", "短期獲利"]):
+                score -= 20
+            if any(k in a for k in ["短期", "短線", "短期獲利"]):
+                score -= 20
+        return max(0, min(100, round(score)))
+
+    def compute_stress_index(self, all_responses: List[Dict]) -> int:
+        """Compute a psychological stress index (0..100) combining Likert stress answers,
+        sentiment negative proportion, and stress-related keyword counts.
+        """
+        base = 40
+        likert_score_sum = 0.0
+        likert_count = 0
+        negative_total = 0.0
+        count = 0
+        keyword_hits = 0
+        stress_keywords = ["壓力", "睡眠", "焦慮", "失眠", "緊張", "心悸", "睡不好"]
+
+        for r in all_responses:
+            ans = (r.get("answer") or "")
+            # detect Likert 1-5
+            try:
+                if isinstance(ans, str):
+                    m = LIKERT_REGEX.search(ans)
+                    if m:
+                        likert_score_sum += int(m.group(1))
+                        likert_count += 1
+            except Exception:
+                pass
+
+            # sentiment negative
+            sentiment = r.get("sentiment", {})
+            negative_total += (sentiment.get("negative", 0.0) or 0.0)
+            count += 1
+
+            # keyword hits in answer
+            la = ans.lower()
+            for k in stress_keywords:
+                if k in la:
+                    keyword_hits += 1
+
+        # Likert contribution (if present, scale so 5-> +20, 1-> -20)
+        if likert_count > 0:
+            avg_likert = likert_score_sum / likert_count
+            base += (avg_likert - 3.0) * 10.0
+
+        # negative sentiment contribution: avg_negative in 0..1 -> scale to 0..40
+        if count > 0:
+            avg_negative = negative_total / count
+            base += avg_negative * 40.0
+
+        # keyword hits each add +3
+        base += keyword_hits * 3.0
+
+        # clamp 0..100
+        return max(0, min(100, round(base)))
+
+    def compute_radar(self, profile: Dict[str, int], stress_index: int, time_horizon: int) -> Dict[str, int]:
+        """Return radar-ready dict with tuned dimensions.
+        Dimensions: risk, stability, confidence, patience (inverse->impulsivity), sensitivity,
+        time_horizon, stress
+        """
+        radar = {
+            "risk": max(0, min(100, int(profile.get("risk", 50)))),
+            "stability": max(0, min(100, int(profile.get("stability", 50)))),
+            "confidence": max(0, min(100, int(profile.get("confidence", 50)))),
+            "impulsivity": max(0, min(100, 100 - int(profile.get("patience", 50)))),
+            "sensitivity": max(0, min(100, int(profile.get("sensitivity", 50)))),
+            "time_horizon": max(0, min(100, int(time_horizon))),
+            "stress": max(0, min(100, int(stress_index))),
+        }
+        return radar

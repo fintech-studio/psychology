@@ -7,6 +7,7 @@ class StartResponse(BaseModel):
     question: Optional[str] = None
     question_number: Optional[int] = None
     total_questions: Optional[int] = None
+    question_meta: Optional[Dict] = None
 
 
 class AnswerRequest(BaseModel):
@@ -20,9 +21,11 @@ class NextQuestionResponse(BaseModel):
     question_number: Optional[int] = None
     total_questions: Optional[int] = None
     advice: Optional[str] = None
+    analysis: Optional[Dict] = None
     # 新增：完成時後端回傳的分析檔案與類型
     profile: Optional[Dict[str, int]] = None
     investor_type: Optional[str] = None
+    question_meta: Optional[Dict] = None
 
 
 class StreamQuestionRequest(BaseModel):

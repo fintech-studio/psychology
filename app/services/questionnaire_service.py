@@ -53,7 +53,8 @@ class QuestionnaireService:
         self,
         session_id: str,
         question: str,
-        index: int | None = None,
+        index: Optional[int] = None,
+        meta: Optional[Dict] = None,
     ) -> bool:
         """儲存動態生成的問題"""
         with self.sessions_lock:
@@ -72,8 +73,16 @@ class QuestionnaireService:
 
             # 在正確的索引位置儲存問題
             questions[current_index] = question
-            # If question contains placeholder tokens like '選擇A' or single-letter options,
-            # sanitize by stripping placeholder tokens but do not replace with predefined examples.
+            # 儲存結構化 meta（若模型提供）
+            if meta is not None:
+                if "questions_meta" not in session:
+                    session["questions_meta"] = []
+                metas = session["questions_meta"]
+                while len(metas) <= current_index:
+                    metas.append({})
+                metas[current_index] = meta
+            # If question contains placeholder tokens like '選擇A' or
+            # single-letter options, sanitize by removing placeholders.
             try:
                 if (
                     re.search(r"\b(選擇|選項)\s*[A-D]\b", question)
@@ -85,10 +94,16 @@ class QuestionnaireService:
                     sanitized = re.sub(r"\s*/\s*", " / ", sanitized).strip()
                     # store sanitized question (no defaults injected)
                     questions[current_index] = sanitized
-                    logger.debug("Sanitized placeholder question: %s -> %s", question, sanitized)
+                    logger.debug(
+                        "Sanitized placeholder question: %s -> %s",
+                        question,
+                        sanitized,
+                    )
             except Exception:
-                logger.exception("Failed to sanitize placeholder options for question: %s", question)
-            # print(f"🔍 儲存問題到索引 {current_index}: {question[:50]}...")
+                logger.exception(
+                    "Failed to sanitize placeholder options for question: %s",
+                    question,
+                )
 
             return True
 
@@ -105,11 +120,11 @@ class QuestionnaireService:
             questions = session.get("questions", [])
 
             if current_index >= len(questions) or not questions[current_index]:
-                logger.warning("⚠️ 警告：第 %s 題問題尚未正確儲存", current_index + 1)
+                logger.warning(
+                    "⚠️ 警告：第 %s 題問題尚未正確儲存",
+                    current_index + 1,
+                )
                 return False
-
-            # print(f"🔍 使用問題 (索引 {current_index}):
-            # {questions[current_index][:50]}...")
 
             # 儲存回答和分析結果
             response_data = {

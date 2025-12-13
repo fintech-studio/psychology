@@ -2,13 +2,13 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import time
 import logging
-logging.basicConfig(level=logging.INFO)
 
 # 導入應用模組
-from routers.questionnaire import router as questionnaire_router
+from routers.questionnaire_refactored import router as questionnaire_router
 import models
 from services import geminiService
 
+logging.basicConfig(level=logging.INFO)
 # FastAPI 應用
 app = FastAPI(title="心理問卷 API", version="1.0.0")
 logger = logging.getLogger(__name__)
@@ -49,11 +49,12 @@ async def startup_event():
     except Exception as e:
         logger.exception("⚠️ 分析模型載入失敗: %s", e)
 
-    # Initialize asynchronous services (e.g., health check for local LLM service)
+    # Initialize async services (e.g., health check for local LLM)
     try:
         await geminiService.init()
     except Exception as e:
         logger.exception("⚠️ 初始化 GeminiService 時發生錯誤: %s", e)
+    logger.info("🚀 心理問卷 API 啟動完成")
 
 
 @app.on_event("shutdown")
@@ -64,8 +65,7 @@ async def shutdown_event():
         logger.info("GeminiService http client closed")
     except Exception:
         logger.exception("Failed to shutdown GeminiService cleanly")
-
-    logger.info("🚀 心理問卷 API 啟動完成")
+    logger.info("心理問卷 API 已關閉")
 
 
 @app.get("/")
@@ -86,4 +86,9 @@ def root():
 @app.get("/health")
 def health_check():
     """健康檢查端點"""
-    return {"status": "healthy", "service": "psychology-questionnaire-api"}
+    return {
+        "status": "healthy",
+        "service": "psychology-questionnaire-api",
+        "llm_available": geminiService.is_api_available(),
+        "llm_model": getattr(geminiService, "model_name", None),
+    }
