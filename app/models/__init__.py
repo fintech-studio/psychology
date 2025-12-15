@@ -9,7 +9,7 @@ sentimentModel = None
 
 
 def init_models():
-	global sentimentModel
-	if sentimentModel is None:
-		sentimentModel = SentimentModel()
-	return sentimentModel
+    global sentimentModel
+    if sentimentModel is None:
+        sentimentModel = SentimentModel()
+    return sentimentModel

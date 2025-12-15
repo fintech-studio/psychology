@@ -1,6 +1,5 @@
-from typing import Dict, List, Optional
+from typing import Dict, List
 import logging
-import re
 # deferred import of models done in __init__
 from config import ENABLE_CONTEXT_ANALYSIS
 
@@ -8,20 +7,12 @@ logger = logging.getLogger(__name__)
 
 # Profile scoring weights and defaults
 DEFAULT_PROFILE_SCORE = 50
-LIKERT_WEIGHTS = {
-    "risk": 8,
-    "stability": 6,
-    "confidence": 6,
-    "patience": 4,
-    "sensitivity": 6,
-}
 KEYWORD_WEIGHTS = {
     "buy": {"risk": 12, "confidence": 8, "sensitivity": 6},
     "sell": {"risk": -12, "stability": -8, "sensitivity": 10},
     "hold": {"stability": 10, "patience": 8, "risk": -4},
     "text_len": {"confidence": 6, "patience": 4},
 }
-LIKERT_REGEX = re.compile(r"\b([1-5])\b")
 
 
 class AnalysisService:
@@ -143,26 +134,9 @@ class AnalysisService:
 
         for r in all_responses:
             ans = (r.get("answer") or "").strip()
-            # 先嘗試從 answer 抽出 Likert 數值（開頭數字或 "N — ..." 格式）
-            likert_val: Optional[int] = None
-            # prefer regex: find any 1-5 token
-            try:
-                m = LIKERT_REGEX.search(ans)
-                if m:
-                    likert_val = int(m.group(1))
-            except Exception:
-                likert_val = None
+            # Non-numeric answers: map keywords and text length to scores
 
-            if likert_val is not None:
-                v = likert_val
-                risk += (v - 3) * LIKERT_WEIGHTS["risk"]
-                stability += (3 - v) * LIKERT_WEIGHTS["stability"]
-                confidence += (v - 3) * LIKERT_WEIGHTS["confidence"]
-                patience += (v - 3) * LIKERT_WEIGHTS["patience"]
-                sensitivity += (3 - v) * LIKERT_WEIGHTS["sensitivity"]
-                continue
-
-            # 非 Likert：以文字關鍵字映射
+            # 以文字關鍵字與長度映射
             text = ans.lower()
             if any(k in text for k in ["加碼", "買入", "進場", "冒險", "高風險"]):
                 risk += KEYWORD_WEIGHTS["buy"]["risk"]
@@ -234,7 +208,8 @@ class AnalysisService:
         )
 
     def compute_time_horizon(self, all_responses: List[Dict]) -> int:
-        """Estimate time-horizon preference from text answers (0..100, where 100 means very long-term)."""
+        """Estimate time-horizon preference from text answers
+        (0..100, where 100 means very long-term)."""
         score = 50
         for r in all_responses:
             q = (r.get("question") or "").lower()
@@ -250,12 +225,11 @@ class AnalysisService:
         return max(0, min(100, round(score)))
 
     def compute_stress_index(self, all_responses: List[Dict]) -> int:
-        """Compute a psychological stress index (0..100) combining Likert stress answers,
-        sentiment negative proportion, and stress-related keyword counts.
+        """Compute a psychological stress index (0..100) combining
+        textual answers, sentiment negative proportion,
+        and stress-related keyword counts.
         """
         base = 40
-        likert_score_sum = 0.0
-        likert_count = 0
         negative_total = 0.0
         count = 0
         keyword_hits = 0
@@ -263,15 +237,6 @@ class AnalysisService:
 
         for r in all_responses:
             ans = (r.get("answer") or "")
-            # detect Likert 1-5
-            try:
-                if isinstance(ans, str):
-                    m = LIKERT_REGEX.search(ans)
-                    if m:
-                        likert_score_sum += int(m.group(1))
-                        likert_count += 1
-            except Exception:
-                pass
 
             # sentiment negative
             sentiment = r.get("sentiment", {})
@@ -284,12 +249,8 @@ class AnalysisService:
                 if k in la:
                     keyword_hits += 1
 
-        # Likert contribution (if present, scale so 5-> +20, 1-> -20)
-        if likert_count > 0:
-            avg_likert = likert_score_sum / likert_count
-            base += (avg_likert - 3.0) * 10.0
-
-        # negative sentiment contribution: avg_negative in 0..1 -> scale to 0..40
+        # negative sentiment contribution:
+        # avg_negative in 0..1 -> scale to 0..40
         if count > 0:
             avg_negative = negative_total / count
             base += avg_negative * 40.0
@@ -300,17 +261,21 @@ class AnalysisService:
         # clamp 0..100
         return max(0, min(100, round(base)))
 
-    def compute_radar(self, profile: Dict[str, int], stress_index: int, time_horizon: int) -> Dict[str, int]:
+    def compute_radar(self, profile: Dict[str, int],
+                      stress_index: int, time_horizon: int) -> Dict[str, int]:
         """Return radar-ready dict with tuned dimensions.
-        Dimensions: risk, stability, confidence, patience (inverse->impulsivity), sensitivity,
+        Dimensions: risk, stability, confidence, patience
+        (inverse->impulsivity), sensitivity,
         time_horizon, stress
         """
         radar = {
             "risk": max(0, min(100, int(profile.get("risk", 50)))),
             "stability": max(0, min(100, int(profile.get("stability", 50)))),
             "confidence": max(0, min(100, int(profile.get("confidence", 50)))),
-            "impulsivity": max(0, min(100, 100 - int(profile.get("patience", 50)))),
-            "sensitivity": max(0, min(100, int(profile.get("sensitivity", 50)))),
+            "impulsivity": max(0, min(100, 100 - int(profile.get(
+                "patience", 50)))),
+            "sensitivity": max(0, min(100, int(profile.get(
+                "sensitivity", 50)))),
             "time_horizon": max(0, min(100, int(time_horizon))),
             "stress": max(0, min(100, int(stress_index))),
         }

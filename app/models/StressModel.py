@@ -1,4 +1,5 @@
-# Stub: StressModel is disabled; keep a minimal interface to avoid calling errors
+# Stub: StressModel is disabled;
+# keep a minimal interface to avoid calling errors
 import logging
 
 logger = logging.getLogger(__name__)
@@ -7,7 +8,8 @@ logger = logging.getLogger(__name__)
 class StressModel:
     def __init__(self):
         # Do not load heavy models; warn via logger instead of printing
-        logger.warning("StressModel disabled: stress analysis removed from the project.")
+        logger.warning(
+            "StressModel disabled: stress analysis removed from the project.")
 
     def analyze(self, text_zh):
         """

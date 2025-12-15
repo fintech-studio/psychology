@@ -6,7 +6,7 @@ import logging
 # 導入應用模組
 from routers.questionnaire_refactored import router as questionnaire_router
 import models
-from services import geminiService
+from services import ollamaService
 
 logging.basicConfig(level=logging.INFO)
 # FastAPI 應用
@@ -51,9 +51,9 @@ async def startup_event():
 
     # Initialize async services (e.g., health check for local LLM)
     try:
-        await geminiService.init()
+        await ollamaService.init()
     except Exception as e:
-        logger.exception("⚠️ 初始化 GeminiService 時發生錯誤: %s", e)
+        logger.exception("⚠️ 初始化 OllamaService 時發生錯誤: %s", e)
     logger.info("🚀 心理問卷 API 啟動完成")
 
 
@@ -61,10 +61,10 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup resources on application shutdown"""
     try:
-        await geminiService.shutdown()
-        logger.info("GeminiService http client closed")
+        await ollamaService.shutdown()
+        logger.info("OllamaService http client closed")
     except Exception:
-        logger.exception("Failed to shutdown GeminiService cleanly")
+        logger.exception("Failed to shutdown OllamaService cleanly")
     logger.info("心理問卷 API 已關閉")
 
 
@@ -89,6 +89,6 @@ def health_check():
     return {
         "status": "healthy",
         "service": "psychology-questionnaire-api",
-        "llm_available": geminiService.is_api_available(),
-        "llm_model": getattr(geminiService, "model_name", None),
+        "llm_available": ollamaService.is_api_available(),
+        "llm_model": getattr(ollamaService, "model_name", None),
     }

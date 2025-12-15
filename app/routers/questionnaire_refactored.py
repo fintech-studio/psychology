@@ -11,7 +11,7 @@ from config import TOTAL_QUESTIONS
 from typing import Dict, Any, Optional
 import json
 import logging
-from services import analysisService, geminiService, questionnaireService
+from services import analysisService, ollamaService, questionnaireService
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ async def _get_current_question_or_404(session_id: str) -> str:
 async def _generate_and_save_next(
     session_id: str, target_number: int, previous_responses: Optional[list]
 ):
-    next_question, next_meta = await geminiService.generate_dynamic_question(
+    next_question, next_meta = await ollamaService.generate_dynamic_question(
         current_number=target_number,
         total_questions=TOTAL_QUESTIONS,
         previous_responses=previous_responses,
@@ -45,7 +45,7 @@ async def _generate_and_save_next(
 async def _finalize_session(session_id: str):
     all_responses = questionnaireService.get_all_responses(session_id)
     try:
-        analysis = await geminiService.generate_content(all_responses)
+        analysis = await ollamaService.generate_content(all_responses)
         if isinstance(analysis, dict):
             advice = analysis.get("advice")
         else:
@@ -71,7 +71,7 @@ async def start_questionnaire() -> StartResponse:
         logger.info("新會話建立：%s", session_id)
         try:
             (first_question, first_meta) = (
-                await geminiService.generate_dynamic_question(
+                await ollamaService.generate_dynamic_question(
                     current_number=1,
                     total_questions=TOTAL_QUESTIONS,
                     previous_responses=None,
@@ -108,16 +108,21 @@ async def start_questionnaire() -> StartResponse:
 @router.post("/answer", response_model=NextQuestionResponse)
 async def submit_answer(request: AnswerRequest) -> NextQuestionResponse:
     try:
-        current_question = await _get_current_question_or_404(
+        # Allow answers to be submitted even if the question text hasn't been
+        # fully generated/saved on the server yet. Verify session exists first.
+        session = questionnaireService.get_session(request.session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="會話不存在或問題不存在")
+        current_question = questionnaireService.get_current_question(
             request.session_id
-        )
+        ) or ""
         sentiment_scores, stress_scores = (
             analysisService.analyze_user_response(
                 request.answer,
                 current_question,
             )
         )
-        success = questionnaireService.save_response(
+        success = await questionnaireService.save_response(
             request.session_id, request.answer, sentiment_scores, stress_scores
         )
         if not success:
@@ -166,7 +171,7 @@ async def stream_question(request: StreamQuestionRequest):
         all_responses = questionnaireService.get_all_responses(
             request.session_id
         )
-        if not geminiService.is_api_available():
+        if not ollamaService.is_api_available():
             logger.error("AI model unavailable for streaming request")
             raise HTTPException(
                 status_code=503,
@@ -177,7 +182,7 @@ async def stream_question(request: StreamQuestionRequest):
         target_number = request.question_number or (progress["current"] + 1)
         
         async def generate_stream():
-            async for chunk in geminiService.stream_question_generation(
+            async for chunk in ollamaService.stream_question_generation(
                 target_number, TOTAL_QUESTIONS, all_responses
             ):
                 if chunk.get("done") and chunk.get("question"):
@@ -202,16 +207,19 @@ async def stream_question(request: StreamQuestionRequest):
 @router.post("/save-question")
 async def save_question(request: SaveQuestionRequest) -> Dict[str, Any]:
     try:
-        current_question = await _get_current_question_or_404(
+        session = questionnaireService.get_session(request.session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="會話不存在或問題不存在")
+        current_question = questionnaireService.get_current_question(
             request.session_id
-        )
+        ) or ""
         sentiment_scores, stress_scores = (
             analysisService.analyze_user_response(
                 request.answer,
                 current_question,
             )
         )
-        success = questionnaireService.save_response(
+        success = await questionnaireService.save_response(
             request.session_id, request.answer, sentiment_scores, stress_scores
         )
         if not success:

@@ -81,6 +81,23 @@ class QuestionnaireService:
                 while len(metas) <= current_index:
                     metas.append({})
                 metas[current_index] = meta
+            # 若先前已存在以佔位字串儲存的回答，回填該回答中的 question 欄位
+            try:
+                responses = session.get("responses", [])
+                if (
+                    isinstance(responses, list)
+                    and len(responses) > current_index
+                    and responses[current_index].get("question") in (
+                        None, "", "(問題尚未生成)")
+                ):
+                    responses[current_index]["question"] = question
+                    logger.info(
+                        "回填回答 %s 的 question 欄位：%s",
+                        current_index,
+                        session["responses"][current_index]["question"],
+                    )
+            except Exception:
+                logger.exception("回填已儲存回答的題目時發生錯誤：%s", session_id)
             # If question contains placeholder tokens like '選擇A' or
             # single-letter options, sanitize by removing placeholders.
             try:
@@ -107,10 +124,21 @@ class QuestionnaireService:
 
             return True
 
-    def save_response(self, session_id: str, answer: str,
-                      sentiment_scores: Dict[str, float],
-                      stress_scores: Dict[str, float]) -> bool:
-        """儲存回答"""
+    def _ensure_question_slot(self, session: Dict, index: int):
+        """確保 questions 列表長度足以放置 index。"""
+        questions = session.get("questions", [])
+        while len(questions) <= index:
+            questions.append("")
+        session["questions"] = questions
+
+    async def save_response(self, session_id: str, answer: str,
+                            sentiment_scores: Dict[str, float],
+                            stress_scores: Dict[str, float]) -> bool:
+        """儲存回答。
+
+        當對應問題尚未生成時，會嘗試立即以 Ollama 生成並回填題目；若生成失敗，則以佔位字串先行儲存，之後可由其他生成程序回填真實題目。
+        """
+        PLACEHOLDER = "(問題尚未生成)"
         with self.sessions_lock:
             session = self.sessions.get(session_id)
             if not session:
@@ -119,19 +147,62 @@ class QuestionnaireService:
             current_index = session["current_question"]
             questions = session.get("questions", [])
 
+            # 如果問題尚未生成，嘗試立即生成並回填
             if current_index >= len(questions) or not questions[current_index]:
-                logger.warning(
-                    "⚠️ 警告：第 %s 題問題尚未正確儲存",
-                    current_index + 1,
-                )
-                return False
+                # try to generate synchronously if Ollama available
+                try:
+                    from services import ollamaService
+                    if ollamaService.is_api_available():
+                        # previous responses so far (to pass for context)
+                        prev = session.get("responses", [])
+                        # Ollama expects 1-based question number
+                        qnum = current_index + 1
+                        try:
+                            qtext, qmeta = await (
+                                ollamaService.generate_dynamic_question(
+                                    current_number=qnum,
+                                    total_questions=self.total_questions,
+                                    previous_responses=prev,
+                                )
+                            )
+                            # ensure slot exists and save generated question
+                            self._ensure_question_slot(session, current_index)
+                            session["questions"][current_index] = qtext
+                            if qmeta is not None:
+                                if "questions_meta" not in session:
+                                    session["questions_meta"] = []
+                                metas = session["questions_meta"]
+                                while len(metas) <= current_index:
+                                    metas.append({})
+                                metas[current_index] = qmeta
+                        except Exception:
+                            logger.exception(
+                                "Immediate generation for question %s failed",
+                                qnum,
+                            )
+                            # fallback to placeholder below
+                    else:
+                        logger.warning(
+                            "⚠️ 第 %s 題問題尚未生成，AI model unavailable;"
+                            " saving placeholder",
+                            current_index + 1,
+                        )
+                except Exception:
+                    logger.exception(
+                        "Error while attempting immediate question generation"
+                    )
+
+                # Ensure slot exists and write placeholder if still missing
+                self._ensure_question_slot(session, current_index)
+                if not session["questions"][current_index]:
+                    session["questions"][current_index] = PLACEHOLDER
 
             # 儲存回答和分析結果
             response_data = {
-                "question": questions[current_index],
+                "question": session["questions"][current_index],
                 "answer": answer,
                 "sentiment": sentiment_scores,
-                "stress": stress_scores
+                "stress": stress_scores,
             }
             session["responses"].append(response_data)
 
@@ -139,6 +210,10 @@ class QuestionnaireService:
             session["current_question"] += 1
 
             return True
+
+    # Note: previous implementation of save_response that returned False when
+    # the current question wasn't present has been removed in favor of the
+    # placeholder-capable implementation above.
 
     def is_questionnaire_complete(self, session_id: str) -> bool:
         """檢查問卷是否完成"""

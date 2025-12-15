@@ -1,11 +1,7 @@
 import asyncio
 import os
 from typing import List, Dict, Optional, Tuple
-import json
-import re
 import logging
-import random
-import httpx
 from dotenv import load_dotenv
 from config import (
     STREAM_DELAY,
@@ -21,30 +17,23 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Precompiled regex patterns to detect fenced JSON
-_CODE_FENCE_JSON_RE = re.compile(
-    r"```(?:json)?\s*(\{[\s\S]*\})\s*```",
-    re.IGNORECASE,
-)
 
-
-class GeminiService:
+class OllamaService:
     def __init__(self):
+
         # Ollama runs locally and does not require an API key.
         # Check reachability in async init
         self.ollama_url = os.getenv("OLLAMA_API_URL", OLLAMA_API_URL)
         self.model_name = os.getenv("OLLAMA_MODEL_NAME", OLLAMA_MODEL_NAME)
         self.api_available = False
         self._health_checked = False
-        self._http_client: httpx.AsyncClient | None = None
-        # No predefined question templates: always use AI to generate content
+        # HTTP helper (initialized in async init)
+        self._http = None
 
     def _option_label_for_type(self, mtype: Optional[str]) -> str:
         """Return a human-friendly option type label for UI."""
         labels = {
-            "mc": "選擇題",
-            "likert": "Likert 1-5",
-            "open": "開放題",
+            "single": "選擇題",
         }
         if not mtype:
             return "其他"
@@ -55,15 +44,14 @@ class GeminiService:
 
         This function should be awaited during application startup.
         """
-        self._ensure_http_client(timeout=10)
-
-        # Use dedicated health check logic
-        # Try configured model first, then fallbacks
+        # Initialize HTTP helper and perform health checks
+        from services.ollama_http import OllamaHttpClient
+        self._http = OllamaHttpClient(self.ollama_url)
         logger.debug("Performing Ollama health check: %s", self.ollama_url)
-        ok = await self._health_check_model(self.model_name)
+        ok = await self._http.health_check_model(self.model_name)
         if not ok:
             for fallback in OLLAMA_MODEL_FALLBACKS:
-                ok = await self._health_check_model(fallback)
+                ok = await self._http.health_check_model(fallback)
                 if ok:
                     self.model_name = fallback
                     break
@@ -78,9 +66,9 @@ class GeminiService:
                     payload = {"model": fallback,
                                "prompt": "ping",
                                "max_tokens": 1}
-                    r = await self._http_client.post(
-                        f"{self.ollama_url}/api/generate", json=payload)
-                    if r.status_code == 200:
+                    r = await self._http.post_json(
+                        f"{self.ollama_url}/api/generate", payload)
+                    if r and r.status_code == 200:
                         self.model_name = fallback
                         self.api_available = True
                         logger.debug("Using fallback model %s", fallback)
@@ -97,62 +85,22 @@ class GeminiService:
                 "Ollama API not available, using local fallback responses")
         self._health_checked = True
 
-    def _ensure_http_client(self, timeout: int = 10) -> None:
-        if self._http_client is None:
-            self._http_client = httpx.AsyncClient(timeout=timeout)
-
     async def shutdown(self):
         """Close http client on shutdown"""
-        if self._http_client is not None:
-            await self._http_client.aclose()
-            self._http_client = None
-
-    async def _http_post_with_retries(
-        self,
-        url: str,
-        payload: Dict,
-        retries: int = 3,
-        timeout: int = 10,
-    ) -> Optional[httpx.Response]:
-        """Helper to POST with retries and exponential backoff.
-
-        Returns httpx.Response on success or None on failure.
-        """
-        self._ensure_http_client(timeout=timeout)
-        backoff = 0.5
-        max_backoff = 5.0
-        for attempt in range(retries):
-            try:
-                resp = await self._http_client.post(url, json=payload)
-                return resp
-            except (httpx.RequestError, httpx.ConnectError) as e:
-                logger.debug("Attempt %s failed: %s", attempt + 1, e)
-                if attempt < retries - 1:
-                    delay = min(max_backoff, backoff * (2 ** attempt))
-                    delay = delay * (0.8 + random.random() * 0.4)
-                    await asyncio.sleep(delay)
-                    continue
-                return None
+        if self._http is not None:
+            await self._http.close()
+            self._http = None
 
     async def _health_check_model(self, model: str) -> bool:
         """Check a single model name for availability using a ping request.
 
         Returns True if API responds to a simple ping generate call.
         """
-        self._ensure_http_client(timeout=10)
-        payload = {"model": model, "prompt": "ping", "max_tokens": 1}
-        r = await self._http_post_with_retries(
-            f"{self.ollama_url}/api/generate",
-            payload,
-        )
-        if r is None:
-            logger.debug(
-                "Model health check failed for %s: no response",
-                model,
-            )
-            return False
-        logger.debug("Model %s health check status=%s", model, r.status_code)
-        return r.status_code == 200
+        # kept for backward compatibility but delegates to http helper
+        if self._http is None:
+            from services.ollama_http import OllamaHttpClient
+            self._http = OllamaHttpClient(self.ollama_url)
+        return await self._http.health_check_model(model)
 
     async def _call_ollama_generate(
         self,
@@ -170,7 +118,12 @@ class GeminiService:
             "temperature": OLLAMA_ADVICE_TEMPERATURE,
             "max_tokens": OLLAMA_ADVICE_MAX_TOKENS,
         }
-        resp = await self._http_post_with_retries(
+        # delegate to HTTP helper
+        resp = None
+        if self._http is None:
+            from services.ollama_http import OllamaHttpClient
+            self._http = OllamaHttpClient(self.ollama_url)
+        resp = await self._http.post_json(
             f"{self.ollama_url}/api/generate", payload, timeout=timeout
         )
         if resp is None:
@@ -196,8 +149,9 @@ class GeminiService:
                 (resp.text or '')[:1024],
             )
             raise
-        # extract response text field(s) robustly using helper
-        out, has_response_field = self._extract_text_from_response(resp.text)
+        # extract response text field(s) using utility helpers
+        from services.ollama_utils import extract_text_from_response
+        out, has_response_field = extract_text_from_response(resp.text)
         return out, has_response_field
 
     def is_api_available(self) -> bool:
@@ -251,214 +205,47 @@ class GeminiService:
         self, meta: Dict, qtype: str, question: str
     ) -> Tuple[Dict, str]:
         """Normalize model-provided meta and return (meta, question_text)."""
+        # Minimal normalization: rely on structured `meta` from LLM.
         if not isinstance(meta, dict):
             meta = {}
+
         dim_map = {
-            'emotion_mc': 'emotion',
-            'stress_likert': 'stress',
-            'risk_mc': 'risk',
+            'emotion': 'emotion',
+            'stress': 'stress',
+            'risk': 'risk',
             'decision_impulse': 'decision',
-            'time_pref_likert': 'time',
+            'term_pref': 'time',
+            'decision': 'decision'
         }
         meta.setdefault('dimension', dim_map.get(qtype, 'general'))
-        if 'type' not in meta:
-            if qtype.endswith('_mc') or qtype == 'decision_impulse':
-                meta['type'] = 'mc'
-            elif 'likert' in qtype:
-                meta['type'] = 'likert'
-            else:
-                meta['type'] = 'open'
-        # Normalize options
-        if meta.get('type') == 'mc' and isinstance(meta.get('options'), list):
+
+        # Support legacy `selection` field by mapping it to `type`.
+        # Only accept 'single' as supported question type; ignore deprecated
+        # 'multiple' values which were removed from the UI.
+        if 'selection' in meta and meta.get('selection') == 'single':
+            meta['type'] = 'single'
+
+        # Normalize/validate `type` to a supported value.
+        t = str(meta.get('type') or '').lower()
+        if t == 'single':
+            meta['type'] = t
+        else:
+            # Default to single-choice when type is missing/unknown.
+            meta.setdefault('type', 'single')
+
+        # Clean options if provided for single-choice questions.
+        if meta.get('type') == 'single' and isinstance(
+                meta.get('options'), list):
             opts = [
                 str(o).strip() for o in meta.get('options') if str(o).strip()
             ]
             if opts:
-                base_q = str(
-                    meta.get('question') or question
-                ).strip()
-                question = f"{base_q} {' / '.join(opts)}"
                 meta['options'] = opts
-        if meta.get('type') == 'likert':
-            lr = (
-                meta.get('likert_range') or meta.get('range') or '1-5'
-            )
-            qtext = str(meta.get('question') or question).strip()
-            if '1' not in qtext or '5' not in qtext:
-                qtext = f"{qtext}（請以 {lr} 評分）"
-            question = qtext
-            meta['options'] = meta.get('options', [])
+            else:
+                meta.pop('options', None)
+
         meta['option_type'] = self._option_label_for_type(meta.get('type'))
         return meta, question
-
-    def _parse_advice_json(self, advice_obj: Dict) -> Dict:
-        """Normalize advice JSON into canonical structure."""
-        def as_list(x):
-            return self._as_list(x)
-        return {
-            'summary': str(advice_obj.get('summary', '')).strip(),
-            'recommendations': as_list(
-                advice_obj.get('recommendations')
-                or advice_obj.get('recommendation')
-            ),
-            'risk_management': as_list(
-                advice_obj.get('risk_management')
-                or advice_obj.get('riskManagement')
-                or advice_obj.get('risk_managements')
-            ),
-            'next_steps': as_list(
-                advice_obj.get('next_steps') or advice_obj.get('nextSteps')
-            ),
-            'tone': str(advice_obj.get('tone', '')).strip(),
-            'raw': advice_obj,
-        }
-
-    def _extract_text_from_response(self, raw_text: str) -> Tuple[str, bool]:
-        """Parse a raw response string that could be streaming JSON lines
-        or plain text JSON and return a concatenated text and whether a
-        'response' field was present.
-        """
-        if not raw_text:
-            return "", False
-        # Try parse as JSON object first
-        try:
-            obj = json.loads(raw_text)
-        except Exception:
-            obj = None
-
-        out = ""
-        has_response = False
-        if isinstance(obj, dict):
-            if 'response' in obj and obj.get('response'):
-                out += obj.get('response', '')
-                has_response = True
-            elif 'content' in obj:
-                c = obj['content']
-                if isinstance(c, list):
-                    for item in c:
-                        if isinstance(item, dict) and 'text' in item:
-                            out += item['text']
-                        elif isinstance(item, str):
-                            out += item
-                elif isinstance(c, str):
-                    out += c
-            elif 'text' in obj:
-                out += obj.get('text', '')
-            elif 'output' in obj:
-                out += obj.get('output', '')
-            return out.strip(), has_response
-
-        # If not JSON object, parse by lines and try to load JSON per line
-        try:
-            for line in raw_text.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    item = json.loads(line)
-                except Exception:
-                    out += line + "\n"
-                    continue
-                if isinstance(item, dict):
-                    if 'response' in item and item.get('response'):
-                        out += item.get('response', '')
-                        has_response = True
-                    elif (
-                        'content' in item
-                        and isinstance(item['content'], str)
-                    ):
-                        out += item['content']
-                    elif 'text' in item:
-                        out += item.get('text', '')
-                    elif 'thinking' in item:
-                        out += item.get('thinking', '')
-        except Exception:
-            pass
-        return out.strip(), has_response
-
-    def _find_json_object_in_string(self, s: str) -> Optional[str]:
-        """Return the first JSON substring that can be parsed from s, or None.
-
-        First attempt to extract JSON inside fenced code blocks
-        (```json ... ```),
-        then fall back to finding the first balanced JSON substring.
-        """
-        if not s:
-            return None
-
-        # Try code fence extraction first
-        m = _CODE_FENCE_JSON_RE.search(s)
-        if m:
-            return m.group(1)
-
-        start = s.find("{")
-        if start == -1:
-            return None
-        depth = 0
-        for i in range(start, len(s)):
-            if s[i] == '{':
-                depth += 1
-            elif s[i] == '}':
-                depth -= 1
-                if depth == 0:
-                    return s[start:i+1]
-        return None
-
-    def _extract_json_from_text(self, raw_text: str) -> Optional[Dict]:
-        """Attempt to extract a JSON object from a text block
-        returned by model.
-        Returns parsed dict or None.
-        """
-        if not raw_text:
-            return None
-
-        # Fast path: entire text is json
-        try:
-            obj = json.loads(raw_text)
-            if isinstance(obj, dict):
-                return obj
-        except Exception:
-            pass
-
-        # If fenced code block exists, try parse inner JSON
-        m = _CODE_FENCE_JSON_RE.search(raw_text)
-        if m:
-            try:
-                obj = json.loads(m.group(1))
-                if isinstance(obj, dict):
-                    return obj
-            except Exception:
-                # continue to substring approach
-                pass
-
-        # Try to find a JSON substring (balanced braces)
-        candidate = self._find_json_object_in_string(raw_text)
-        if not candidate:
-            return None
-        try:
-            obj = json.loads(candidate)
-            if isinstance(obj, dict):
-                return obj
-        except Exception:
-            # trim code fences/backticks and try again
-            cleaned = candidate.strip().strip('`\n ')
-            try:
-                obj = json.loads(cleaned)
-                if isinstance(obj, dict):
-                    return obj
-            except Exception:
-                return None
-        return None
-
-    def _sanitize_text(self, s: Optional[str]) -> str:
-        if not s:
-            return ""
-        txt = str(s)
-        txt = txt.replace('"', '').replace("'", '').replace('*', '')
-        txt = "\n".join(
-            [line.strip() for line in txt.splitlines() if line.strip()]
-        )
-        return txt
 
     def _build_prompt(
             self, qtype: str, current_number: int, total_questions: int
@@ -471,30 +258,30 @@ class GeminiService:
         return build_question_prompt(qtype, current_number, total_questions)
         # unreachable: function returns above
 
-    # NOTE: We removed local placeholder repair & heavy sanitization.
-    # The LLM prompt template enforces strict JSON output and `meta` with
-    # required fields (type, option_type, dimension). If `meta` is missing,
-    # minimal inference is performed (slash => mc, Likert hint => likert).
-
     async def generate_dynamic_question(self, current_number: int,
                                         total_questions: int,
                                         previous_responses: List[Dict] = None
                                         ) -> Tuple[str, Optional[Dict]]:
-        """動態生成問題內容，並確保回傳能被前端辨識類型（MC / Likert / open）"""
+        """動態生成問題內容，並確保回傳能被前端辨識為單選題(single)
+
+        此服務現在僅回傳結構化的單選題（`type: 'single'` / `options`），
+        不再依賴自由文字內的任何隱含格式。
+        """
         logger.debug("generate_dynamic_question called: current=%s total=%s",
                      current_number, total_questions)
         # 題型輪替：擴充為多個 dimension（情緒 / 壓力 / 風險 / 決策衝動 / 時域 / 最近壓力）
         # 使用輪替以保證問卷包含多種類型
         qtypes = [
-            "emotion_mc",
-            "stress_likert",
-            "risk_mc",
+            "emotion",
+            "stress",
+            "risk",
             "decision_impulse",
-            "time_pref_likert",
+            "term_pref",
+            "decision",
         ]
         qtype = qtypes[(current_number - 1) % len(qtypes)]
 
-        # 如果 Ollama API 無法使用，回傳明確格式的 fallback 題目（包含選項或 Likert 指示）
+        # 如果 Ollama API 無法使用，拋出錯誤（不使用預設題目）
         # Ensure we checked API health, try to init if not checked
         if not self._health_checked:
             try:
@@ -524,13 +311,18 @@ class GeminiService:
             )
             # extract combined text and whether response field was present
             # Try to extract JSON if model returns structured output
-            meta = self._extract_json_from_text(resp_text)
-            question, _ = self._extract_text_from_response(resp_text)
+            from services.ollama_utils import (
+                extract_json_from_text,
+                extract_text_from_response,
+                sanitize_text,
+            )
+            meta = extract_json_from_text(resp_text)
+            question, _ = extract_text_from_response(resp_text)
             logger.debug(
                 "generated question raw (len=%s)", len(question)
             )
             # Ensure question is sanitized
-            question = self._sanitize_text(question)
+            question = sanitize_text(question)
             logger.debug(
                 "generated question (len=%s): %s",
                 len(question),
@@ -543,48 +335,11 @@ class GeminiService:
             if meta and isinstance(meta, dict):
                 meta, question = self._normalize_meta(meta, qtype, question)
 
-            # WE NO LONGER PERFORM EXTENSIVE LOCAL VALIDATION/CLEANUP HERE.
-            # The LLM prompt is expected to return structured JSON meta. If it
-            # does not, we apply a simple inference fallback below rather than
-            # heavy sanitization or option injection.
-
-            # If the LLM did not provide structured meta, try to infer useful
-            # metadata (type, options, question text) from the final question.
+            # We expect the LLM to return structured JSON `meta`.
+            # Do minimal local normalization and defaults only - avoid
+            # inferring types/options from the free-text `question`.
             if meta is None:
                 meta = {}
-            # infer multi-choice options from slash-separated text
-            if 'options' not in meta and '/' in question:
-                parts = [
-                    p.strip()
-                    for p in re.split(r'\s*/\s*', question)
-                    if p.strip()
-                ]
-                # if multiple parts and most parts not single-letter
-                # placeholders
-                if len(parts) > 1:
-                    # Use the parts as options directly, trusting JSON when
-                    # returned
-                    filtered = parts
-                    if len(filtered) > 1:
-                        meta['type'] = 'mc'
-                        meta['options'] = filtered
-                        m_q = re.match(r'^(.*?)(?:\s*/\s*.*)$', question)
-                        meta['question'] = (
-                            m_q.group(1).strip() if m_q else question
-                        )
-                        # Set option label in Chinese for front-end
-                        meta['option_type'] = (
-                            self._option_label_for_type(
-                                meta.get('type')
-                            )
-                        )
-            # infer likert if Likert hint present
-            if 'type' not in meta and (
-                any(x in question for x in ['請以', '1-5', '1 到 5', '1 到 5 評'])
-                or ('likert' in (str(meta.get('type') or '')).lower())
-            ):
-                meta['type'] = 'likert'
-                meta['option_type'] = self._option_label_for_type('likert')
 
             # ensure options are strings and trimmed when present
             if meta.get('options') and isinstance(meta.get('options'), list):
@@ -595,21 +350,21 @@ class GeminiService:
                 ]
 
             # Ensure we always provide a UI-friendly option type label
-            if 'option_type' not in meta:
-                meta['option_type'] = (
-                    self._option_label_for_type(meta.get('type'))
-                )
+            meta.setdefault(
+                'option_type',
+                self._option_label_for_type(meta.get('type')),
+            )
 
             # Ensure dimension is set for UI and analytics
-            if 'dimension' not in meta:
-                dim_map = {
-                    'emotion_mc': 'emotion',
-                    'stress_likert': 'stress',
-                    'risk_mc': 'risk',
-                    'decision_impulse': 'decision',
-                    'time_pref_likert': 'time',
-                }
-                meta['dimension'] = dim_map.get(qtype, 'general')
+            dim_map = {
+                'emotion': 'emotion',
+                'stress': 'stress',
+                'risk': 'risk',
+                'decision_impulse': 'decision',
+                'term_pref': 'time',
+                'decision': 'decision'
+            }
+            meta.setdefault('dimension', dim_map.get(qtype, 'general'))
 
             return question, meta
 
@@ -720,18 +475,23 @@ class GeminiService:
                 prompt, prefer_has_response=True
             )
             if advice:
-                clean_advice = self._sanitize_text(str(advice))
+                from services.ollama_utils import (
+                    sanitize_text,
+                    extract_json_from_text,
+                    parse_advice_json,
+                )
+                clean_advice = sanitize_text(str(advice))
                 clean_advice = clean_advice.replace("**", "").replace("*", "")
                 # Try to parse JSON advice if present in the reply
                 advice_obj = None
                 try:
-                    advice_obj = self._extract_json_from_text(advice)
+                    advice_obj = extract_json_from_text(advice)
                 except Exception:
                     advice_obj = None
 
                 advice_json = None
                 if isinstance(advice_obj, dict):
-                    advice_json = self._parse_advice_json(advice_obj)
+                    advice_json = parse_advice_json(advice_obj)
 
                 # Return structured analysis with textual advice and
                 # parsed JSON when available

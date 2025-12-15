@@ -24,13 +24,15 @@ class Translator:
     def _get_zh_en_pipeline(self) -> Pipeline:
         if self._zh_en_pipeline is None:
             logger.debug("Loading translation model: %s", self.zh_en_model)
-            self._zh_en_pipeline = pipeline("translation", model=self.zh_en_model)
+            self._zh_en_pipeline = pipeline(
+                "translation", model=self.zh_en_model)
         return self._zh_en_pipeline
 
     def _get_en_zh_pipeline(self) -> Pipeline:
         if self._en_zh_pipeline is None:
             logger.debug("Loading translation model: %s", self.en_zh_model)
-            self._en_zh_pipeline = pipeline("translation", model=self.en_zh_model)
+            self._en_zh_pipeline = pipeline(
+                "translation", model=self.en_zh_model)
         return self._en_zh_pipeline
 
     def translate_zn_en(self, text: str) -> str:
