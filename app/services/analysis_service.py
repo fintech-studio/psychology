@@ -132,29 +132,157 @@ class AnalysisService:
         patience = DEFAULT_PROFILE_SCORE
         sensitivity = DEFAULT_PROFILE_SCORE
 
-        for r in all_responses:
-            ans = (r.get("answer") or "").strip()
-            # Non-numeric answers: map keywords and text length to scores
+        # Redesigned behavior:
+        # - Use structured `meta` and `options_score` when available.
+        # - Prefer `selected_option_score` when present;
+        #   otherwise derive a selection
+        #   from `selected_option_index`,
+        #   answer text, or fallback to the highest score.
+        # - If no structured info available,
+        #   use sentiment as a light-weight fallback.
+        # - Apply dimension-specific scales to map selection strength (0..1)
+        #   into profile attribute deltas.
 
-            # 以文字關鍵字與長度映射
-            text = ans.lower()
-            if any(k in text for k in ["加碼", "買入", "進場", "冒險", "高風險"]):
-                risk += KEYWORD_WEIGHTS["buy"]["risk"]
-                confidence += KEYWORD_WEIGHTS["buy"]["confidence"]
-                sensitivity += KEYWORD_WEIGHTS["buy"]["sensitivity"]
-            elif any(k in text for k in ["賣出", "逃離", "恐慌", "立刻賣出", "減碼"]):
-                risk += KEYWORD_WEIGHTS["sell"]["risk"]
-                stability += KEYWORD_WEIGHTS["sell"]["stability"]
-                sensitivity += KEYWORD_WEIGHTS["sell"]["sensitivity"]
-            elif any(k in text for k in ["觀望", "冷靜", "等待", "持有", "保守"]):
-                stability += KEYWORD_WEIGHTS["hold"]["stability"]
-                patience += KEYWORD_WEIGHTS["hold"]["patience"]
-                risk += KEYWORD_WEIGHTS["hold"]["risk"]
-            else:
-                # 長文字視為較高參與與信心
-                if len(text) > 80:
-                    confidence += KEYWORD_WEIGHTS["text_len"]["confidence"]
-                    patience += KEYWORD_WEIGHTS["text_len"]["patience"]
+        DIMENSION_SCALES = {
+            # dimension: {profile_attr: scale}
+            "risk": {"risk": 36.0, "confidence": 12.0, "sensitivity": 8.0},
+            "stress": {
+                "stability": -36.0, "patience": -18.0, "sensitivity": 12.0},
+            "emotion": {
+                "sensitivity": 24.0, "confidence": 10.0, "stability": -6.0},
+            "time": {"patience": 36.0, "risk": -12.0, "confidence": 6.0},
+            "decision": {
+                "risk": 24.0, "confidence": 18.0, "sensitivity": 12.0},
+        }
+
+        def _determine_selected_score(r: Dict) -> float | None:
+            """Determine a selected score (0..1) for the response r.
+            Returns None if no information can be derived."""
+            # direct selected score first
+            sel = r.get("selected_option_score")
+            if sel is not None:
+                try:
+                    return float(sel)
+                except Exception:
+                    pass
+
+            # try selected index + meta options_score
+            idx = r.get("selected_option_index")
+            meta = r.get("meta") or {}
+            opts_scores = None
+            if isinstance(meta.get("options_score"), list):
+                try:
+                    opts_scores = [float(x) for x in meta.get("options_score")]
+                except Exception:
+                    opts_scores = None
+            if idx is not None and isinstance(idx, int) and opts_scores:
+                if 0 <= idx < len(opts_scores):
+                    return float(opts_scores[idx])
+
+            # try to match answer to options (best-effort)
+            ans = (r.get("answer") or "").strip()
+            opts = meta.get("options") if isinstance(meta.get("options"),
+                                                     list) else None
+            if opts and opts_scores:
+                # exact / case-insensitive match
+                for i, o in enumerate(opts):
+                    if ans == o or ans.lower() == o.lower():
+                        try:
+                            return float(opts_scores[i])
+                        except Exception:
+                            return None
+                # partial containment fallback
+                for i, o in enumerate(opts):
+                    if o.lower() in ans.lower() or ans.lower() in o.lower():
+                        try:
+                            return float(opts_scores[i])
+                        except Exception:
+                            return None
+                # fallback to strongest option if user didn't select clearly
+                try:
+                    return float(max(opts_scores))
+                except Exception:
+                    return None
+
+            # As last resort use sentiment-derived soft signal
+            sentiment = r.get("sentiment", {})
+            pos = float(sentiment.get("positive", 0.0) or 0.0)
+            neg = float(sentiment.get("negative", 0.0) or 0.0)
+            net = pos - neg
+            # map net (-1..1) -> roughly (0..1) centered at 0.5
+            try:
+                return max(0.0, min(1.0, 0.5 + net * 0.25))
+            except Exception:
+                return None
+
+        # Aggregate contributions
+        contribution_counts = {
+            "risk": 0,
+            "stability": 0,
+            "confidence": 0,
+            "patience": 0,
+            "sensitivity": 0}
+
+        for r in all_responses:
+            meta = r.get("meta") or {}
+            dim = (meta.get("dimension") or "").lower()
+            sel_score = _determine_selected_score(r)
+            if sel_score is None:
+                # nothing we can do for this response
+                continue
+            scales = DIMENSION_SCALES.get(dim)
+            if not scales:
+                # unknown dimension: skip but count as ignored
+                continue
+
+            for attr, scale in scales.items():
+                delta = (float(sel_score) - 0.5) * float(scale)
+                if attr == "risk":
+                    risk += delta
+                    contribution_counts["risk"] += 1
+                elif attr == "stability":
+                    stability += delta
+                    contribution_counts["stability"] += 1
+                elif attr == "confidence":
+                    confidence += delta
+                    contribution_counts["confidence"] += 1
+                elif attr == "patience":
+                    patience += delta
+                    contribution_counts["patience"] += 1
+                elif attr == "sensitivity":
+                    sensitivity += delta
+                    contribution_counts["sensitivity"] += 1
+
+        # Optionally normalize by number of contributions per attribute
+        # (to reduce bias from many questions)
+        for attr in ["risk",
+                     "stability",
+                     "confidence",
+                     "patience",
+                     "sensitivity"]:
+            cnt = contribution_counts.get(attr, 0)
+            if cnt > 0:
+                # gently average the accumulated delta
+                # by number of contributions
+                # We already added deltas directly;
+                # dividing by cnt reduces magnitude from many small questions
+                # Using a mild normalizer
+                if attr == "risk":
+                    risk = DEFAULT_PROFILE_SCORE + (
+                        risk - DEFAULT_PROFILE_SCORE) / (1 + 0.25 * (cnt - 1))
+                else:
+                    # for others use similar normalization
+                    val = locals()[attr]
+                    new_val = DEFAULT_PROFILE_SCORE + (
+                        val - DEFAULT_PROFILE_SCORE) / (1 + 0.25 * (cnt - 1))
+                    if attr == "stability":
+                        stability = new_val
+                    elif attr == "confidence":
+                        confidence = new_val
+                    elif attr == "patience":
+                        patience = new_val
+                    elif attr == "sensitivity":
+                        sensitivity = new_val
 
         # clamp 0..100
         def clamp(x: float) -> int:
@@ -208,57 +336,61 @@ class AnalysisService:
         )
 
     def compute_time_horizon(self, all_responses: List[Dict]) -> int:
-        """Estimate time-horizon preference from text answers
-        (0..100, where 100 means very long-term)."""
-        score = 50
+        """Estimate time-horizon preference using
+        question meta `dimension=='time'`
+        and the `selected_option_score` (0..1).
+        Returns 0..100, where 100 means very long-term.
+
+        If no structured time-related responses exist, default to 50.
+        """
+        score = 50.0
+        count = 0
         for r in all_responses:
-            q = (r.get("question") or "").lower()
-            a = (r.get("answer") or "").lower()
-            if any(k in q for k in ["長期", "長線", "退休", "長期投資"]):
-                score += 20
-            if any(k in a for k in ["長期", "長線", "退休", "長期投資"]):
-                score += 20
-            if any(k in q for k in ["短期", "短線", "短期獲利"]):
-                score -= 20
-            if any(k in a for k in ["短期", "短線", "短期獲利"]):
-                score -= 20
+            sel = r.get("selected_option_score")
+            meta = r.get("meta") or {}
+            dim = (meta.get("dimension") or "").lower()
+            if dim != "time" or sel is None:
+                continue
+            # sel in 0..1 -> contribution scaled to +/-30
+            score += (float(sel) - 0.5) * 60.0
+            count += 1
+        if count == 0:
+            return 50
         return max(0, min(100, round(score)))
 
     def compute_stress_index(self, all_responses: List[Dict]) -> int:
-        """Compute a psychological stress index (0..100) combining
-        textual answers, sentiment negative proportion,
-        and stress-related keyword counts.
+        """Compute a psychological stress index (0..100).
+
+        New approach:
+        - Use negative sentiment average (as before) + `selected_option_score`
+          contributions from questions with `dimension=='stress'`.
+        - Each stress-related selected score contributes up to +30.
         """
-        base = 40
+        base = 40.0
         negative_total = 0.0
         count = 0
-        keyword_hits = 0
-        stress_keywords = ["壓力", "睡眠", "焦慮", "失眠", "緊張", "心悸", "睡不好"]
+        stress_contrib = 0.0
 
         for r in all_responses:
-            ans = (r.get("answer") or "")
-
             # sentiment negative
             sentiment = r.get("sentiment", {})
             negative_total += (sentiment.get("negative", 0.0) or 0.0)
             count += 1
 
-            # keyword hits in answer
-            la = ans.lower()
-            for k in stress_keywords:
-                if k in la:
-                    keyword_hits += 1
+            sel = r.get("selected_option_score")
+            meta = r.get("meta") or {}
+            dim = (meta.get("dimension") or "").lower()
+            if dim == "stress" and sel is not None:
+                try:
+                    stress_contrib += float(sel) * 30.0
+                except Exception:
+                    pass
 
-        # negative sentiment contribution:
-        # avg_negative in 0..1 -> scale to 0..40
         if count > 0:
             avg_negative = negative_total / count
             base += avg_negative * 40.0
 
-        # keyword hits each add +3
-        base += keyword_hits * 3.0
-
-        # clamp 0..100
+        base += stress_contrib
         return max(0, min(100, round(base)))
 
     def compute_radar(self, profile: Dict[str, int],

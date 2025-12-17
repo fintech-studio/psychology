@@ -204,6 +204,60 @@ class QuestionnaireService:
                 "sentiment": sentiment_scores,
                 "stress": stress_scores,
             }
+
+            # Attach any available structured meta
+            # (options, options_score, dimension)
+            try:
+                metas = session.get("questions_meta", [])
+                if len(metas) > current_index and isinstance(
+                        metas[current_index], dict):
+                    qmeta = metas[current_index]
+                    response_data["meta"] = qmeta
+                    # If options present, attempt to
+                    # resolve selected option index and score
+                    opts = qmeta.get("options") if isinstance(
+                        qmeta.get("options"), list) else None
+                    scores = qmeta.get("options_score") if isinstance(
+                        qmeta.get("options_score"), list) else None
+                    sel_idx = None
+                    sel_score = None
+                    if opts:
+                        # Try exact match / case-insensitive match
+                        ans_norm = (answer or "").strip()
+                        for i, o in enumerate(opts):
+                            if ans_norm == o or ans_norm.lower() == o.lower():
+                                sel_idx = i
+                                break
+                        # Try letter-based match (A/B/C)
+                        if sel_idx is None:
+                            m = re.search(r"\b([A-D])\b", ans_norm, re.I)
+                            if m:
+                                li = ord(m.group(1).upper()) - ord('A')
+                                if 0 <= li < len(opts):
+                                    sel_idx = li
+                        # Fallback: try partial containment
+                        if sel_idx is None:
+                            for i, o in enumerate(opts):
+                                if o.lower() in ans_norm.lower() or (
+                                        ans_norm.lower() in o.lower()):
+                                    sel_idx = i
+                                    break
+                        if sel_idx is not None and scores and (
+                                0 <= sel_idx < len(scores)):
+                            try:
+                                sel_score = float(scores[sel_idx])
+                                # Clamp 0..1
+                                sel_score = max(0.0, min(1.0, sel_score))
+                            except Exception:
+                                sel_score = None
+                        # attach found values even if None for clarity
+                        response_data["selected_option_index"] = sel_idx
+                        response_data["selected_option_score"] = sel_score
+            except Exception:
+                logger.exception(
+                    "Failed to attach question meta to response: %s",
+                    session_id)
+
             session["responses"].append(response_data)
 
             # 移動到下一個問題

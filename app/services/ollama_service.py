@@ -241,6 +241,47 @@ class OllamaService:
             ]
             if opts:
                 meta['options'] = opts
+                # Normalize/validate options_score
+                # when provided or generate defaults.
+                # Desired behavior:
+                # - Accept numeric lists and coerce to floats.
+                # - Ensure length == len(options) by truncating or padding.
+                # - Normalize to 0.0..1.0 (if max > 1, divide by max),
+                #   clamp to [0,1].
+                # - If no options_score provided,
+                #   create evenly spaced scores from 0..1.
+                n_opts = len(meta['options'])
+                raw_scores = meta.get('options_score')
+                if isinstance(raw_scores, list):
+                    parsed_scores = []
+                    for v in raw_scores:
+                        try:
+                            parsed_scores.append(float(v))
+                        except Exception:
+                            parsed_scores.append(0.0)
+                    # Ensure correct length
+                    if len(parsed_scores) < n_opts:
+                        # Pad with last value or 0.0
+                        pad_val = parsed_scores[-1] if parsed_scores else 0.0
+                        parsed_scores += [pad_val] * (
+                            n_opts - len(parsed_scores))
+                    elif len(parsed_scores) > n_opts:
+                        parsed_scores = parsed_scores[:n_opts]
+                    # Normalize scale if needed (e.g., 1-5 -> 0-1)
+                    max_abs = max((abs(x) for x in parsed_scores), default=1.0)
+                    if max_abs > 1.0:
+                        parsed_scores = [x / max_abs for x in parsed_scores]
+                    # Clamp to [0,1]
+                    parsed_scores = (
+                        [min(1.0, max(0.0, x)) for x in parsed_scores])
+                    meta['options_score'] = parsed_scores
+                else:
+                    # generate default evenly spaced scores
+                    if n_opts == 1:
+                        meta['options_score'] = [1.0]
+                    else:
+                        meta['options_score'] = [round(i / (n_opts - 1), 3)
+                                                 for i in range(n_opts)]
             else:
                 meta.pop('options', None)
 

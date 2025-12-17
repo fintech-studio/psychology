@@ -7,6 +7,8 @@ QUESTION_JSON_SCHEMA = '''請以純 JSON 格式回傳題目，僅輸出 JSON（�
 - `question`: 題目文字（繁體中文，15-40 字為佳）
 - `type`: 題型，固定為 `single`（單選題）
 - `options`: 選項陣列（需提供 3-6 個選項）
+- `options_score`: 與 `options` 等長的數值陣列，對應每個選項的分數
+    （請使用 0.0 到 1.0 的範圍；數值越大表示該選項在該題目維度上的強度或偏好越高）。
 - `dimension`: 題目維度，請使用以下其中一個值：`emotion`、`stress`、`term_pref`、`risk`、`decision`
 
 回傳範例（必須遵守結構）：
@@ -14,6 +16,7 @@ QUESTION_JSON_SCHEMA = '''請以純 JSON 格式回傳題目，僅輸出 JSON（�
     "question": "題目描述文字...",
     "type": "single",
     "options": ["選項A", "選項B", "選項C", ...],
+    "options_score": [選項A分數, 選項B分數, ...],
     "dimension": "risk|stress|term_pref|emotion|decision"
 }
 
@@ -23,6 +26,9 @@ QUESTION_JSON_SCHEMA = '''請以純 JSON 格式回傳題目，僅輸出 JSON（�
 - 請使用「投資相關」的題目情境與描述。
 - 請使用「您」作為主詞，讓題目更具個人化與互動性，避免使用第三人稱。
 - 請確保題目和選項具備邏輯一致性且符合投資情境，避免矛盾或不合理的描述。
+- dimension 欄位必須與題目內容相符，且只能使用指定的五個維度之一，只能回覆一個維度而已。
+- 請為每個選項評分，並在輸出的 JSON 中以 `options_score` 欄位提供與 `options` 等長的數字陣列
+    （範圍 0.0–1.0，若使用 1–5 或其他量表請標準化為 0–1）。
 '''
 
 
@@ -92,5 +98,6 @@ def build_advice_prompt(
 - 一句短的鼓勵或同理心話語（1 行）。
 
 請使用繁體中文，確保建議內容具體且實用，並以同理心的語氣撰寫。
+請使用「您」作為主詞，讓建議更具個人化與互動性，避免使用第三人稱。
 請務必使用 Markdown 格式回覆。
 """
