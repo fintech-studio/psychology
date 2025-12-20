@@ -1,7 +1,10 @@
 import asyncio
 import random
 import logging
-from typing import Optional, Any
+from typing import Optional, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +34,7 @@ class OllamaHttpClient:
         payload: dict,
         retries: int = 3,
         timeout: int = 10,
-    ) -> Optional[httpx.Response]:
+    ) -> Optional["httpx.Response"]:
         """POST JSON with retries and exponential backoff.
 
         Returns httpx.Response on success or None on failure.

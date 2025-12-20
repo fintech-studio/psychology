@@ -1,407 +1,134 @@
-# 投資心理問卷 API 系統
+# 心理問卷 API 服務
 
-基於 FastAPI 的智能投資心理分析系統，結合本地部署的 Ollama 模型（或 Google Gemini AI）與 FinBERT 情緒分析模型，為用戶提供個人化的投資心理評估和建議。採用現代化模組化架構設計。
+基於 FastAPI 和 AI 模型的智能心理問卷系統，用於分析用戶的投資心理特徵和風險偏好。
 
-## 📁 專案架構
+## 功能特色
+
+- 🤖 **AI 驅動問題生成**：使用 Ollama 本地 LLM 動態生成個性化問題
+- 📊 **多維度分析**：情緒分析、壓力評估、風險偏好、決策模式分析
+- 🎯 **投資者分類**：基於心理特徵自動分類投資者類型
+- 📈 **結構化報告**：生成詳細的心理分析報告和建議
+
+## 技術架構
+
+### 核心技術
+
+- **FastAPI**: 高性能 Web 框架
+- **Ollama**: 本地 LLM 服務
+- **Transformers**: Hugging Face 模型庫
+- **FinBERT**: 金融領域情感分析模型
+- **PyTorch**: 深度學習框架
+
+### 專案結構
 
 ```
-psychology/
-├── app/
-│   ├── config.py                  # 應用程式配置
-│   ├── main.py                    # 主應用程式入口
-│   ├── models/                    # 機器學習模型
-│   │   ├── __init__.py
-│   │   ├── SentimentModel.py      # FinBERT 情緒分析模型
-│   │   └── StressModel.py         # 壓力分析模型（已停用）
-│   ├── routers/                   # API 路由
-│   │   └── questionnaire.py       # 問卷相關端點
-│   ├── schemas/                   # Pydantic 資料模型
-│   │   └── questionnaire.py       # 問卷 API 的請求/回應模型
-│   ├── services/                  # 業務邏輯服務
-│   │   ├── __init__.py
-│   │   ├── analysis_service.py    # 心理分析與投資者分類服務
-│   │   ├── gemini_service.py      # AI 問題生成與建議服務（採用本地 Ollama 或 Gemini）
-│   │   └── questionnaire_service.py # 問卷會話管理服務
-│   └── utils/                     # 工具類
-│       ├── test.py
-│       └── Translate.py           # 中英翻譯工具
-├── test/                          # 測試檔案
-│   ├── main.py.bak
-│   └── runmodel.py
-├── .env                           # 環境變數（需自行建立）
-├── .env.example                   # 環境變數範例
-├── .gitignore
-├── pyproject.toml                 # 專案配置
-├── uv.lock                        # 套件詳細訊息
-├── requirements.txt
-├── .python-version                # python版本
-└── README.md                      # 專案說明
+app/
+├── models/                         # 模型
+│   ├── SentimentModel.py           # 情感分析模型
+│   └── StressModel.py              # 壓力評估模型
+├── routers/                        # API 路由
+│   └── questionnaire_refactored.py
+├── schemas/                        # 資料結構定義
+│   └── questionnaire.py
+├── services/                       # 業務邏輯服務
+│   ├── analysis_service.py         # 分析服務
+│   ├── ollama_service.py           # Ollama LLM 服務
+│   ├── questionnaire_service.py    # 問卷服務
+│   └── prompt_templates.py         # 提示詞模板
+├── utils/                          # 工具函數
+│   └── Translate.py                # 翻譯工具
+├── config.py                       # 配置文件
+└── main.py                         # 應用入口
 ```
 
-## 管理工具 uv
-
-安裝 uv
-
-```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-初始化專案
-
-```powershell
-uv init
-```
-
-安裝套件
-
-```powershell
-uv add [package-name]
-```
-
-同步環境
-
-```powershell
-uv sync
-```
-
-## 🎯 功能特色
-
-- 🤖 **動態問題生成**：使用本地部署的 Ollama（或 Google Gemini）根據用戶回答動態生成個人化問題
-- 📊 **多種題型支援**：目前以選擇題（single-choice）為主要題型
-- 🧠 **情緒分析**：使用 FinBERT 模型分析投資相關情緒（正面/負面/中性）
-- 💼 **投資者分類**：基於心理特徵將用戶分類為五種投資者類型
-- 🎭 **心理畫像**：生成風險偏好、穩定性、信心、耐心、敏感度等五維度評分
-- 🔥 **心理壓力指數**：整合情緒負向比例與關鍵字計算壓力指數（0-100）
-- 📈 **雷達圖維度擴充**：含風險、穩定性、信心、耐心、敏感度、衝動性、時域（長短期傾向）、壓力
-- 🏗️ **模組化架構**：清晰的職責分工，易於維護和擴展
-
-## 🔄 系統亮點
-
-### 1. 智能問卷設計
-
-- **動態問題生成**: 使用本地部署的 Ollama（或 Google Gemini）根據用戶回答歷史生成個人化問題
-- **題型輪替機制**: 自動輪替情緒反應、壓力感知、風險偏好、決策習慣四種題型（皆為選擇題）
-- **格式自動識別**: 前端識別與處理選擇題與開放式問題
-
-### 2. 投資心理分析
-
-- **五維度評估**: 風險偏好、穩定性、信心、耐心、敏感度（0-100 分）
-- **投資者分類**: 波動型、探險型、冷靜型、謹慎型、綜合型五種類型
-- **情緒分析**: 使用 FinBERT 金融領域專用模型分析投資情緒
-
-### 3. 服務分層架構
-
-#### 📊 AnalysisService
-
-- 情緒分析與心理畫像計算
-- 投資者類型分類演算法
-- 支援上下文分析（問題+回答）
-
-#### 🤖 GeminiService (Ollama 本地化)
-
-- 動態問題生成與串流顯示
-- 個人化建議生成（使用本地 Ollama）
-- 支援 fallback 機制確保服務穩定性
-
-#### 📝 QuestionnaireService
-
-- 會話狀態管理與進度追蹤
-- 問答資料儲存與檢索
-- 多用戶並發支援
-
-## 🛠️ 技術架構
-
-### 後端技術
-
-- **FastAPI**: 高性能 Python Web 框架，支援自動 API 文檔生成
-  -- **Local Ollama / Google Generative AI**: 在本地使用 Ollama 部署的模型（或使用 Google Gemini）用於問題生成和建議
-- **Transformers**: HuggingFace 模型庫，支援 GPU 加速
-- **Pydantic**: 資料驗證和設定管理
-- **Python-dotenv**: 環境變數管理
-
-### AI 模型
-
-- **情緒分析**: ProsusAI/finbert（金融領域專用情緒分析模型）
-- **問題生成**: Google Gemini-2.0-flash（支援繁體中文）
-- **翻譯服務**: Google Translate API（透過 utils/Translate.py）
-- **設備支援**: 自動檢測 GPU 並使用 CUDA 加速（device=0）
-
-## 🚀 安裝與啟動
+## 快速開始
 
 ### 環境需求
 
-- Python 3.8+
-- CUDA（推薦，用於 GPU 加速模型推理）
-- (可選) Google API Key（僅在使用 Google Gemini 而非本地 Ollama 時需要）
-
-### Troubleshooting: Ollama local model not returning results
-
-- 若您發現 API 只回傳 fallback（預設）回應，而非 AI 生成的建議，請先確認以下項目：
-  1. Ollama 是否已啟動並能回應，執行：
-  ```powershell
-  ollama ls
-  ```
-  若看到可用模型清單，代表 Ollama 服務可用。 2. 確認 `OLLAMA_MODEL_NAME` 的值（在 `.env` 或 `app/config.py`），並改為您本機已安裝的模型（例如：`llama3.1:8b`）。 3. 測試模型回應（本地呼叫示例）：
-  ```powershell
-  curl --silent -X POST "http://127.0.0.1:11434/api/generate" -H "Content-Type: application/json" -d "{\"model\": \"llama3.2:8b\", \"prompt\": \"測試：請回一句繁體中文問候\", \"max_tokens\": 40}"
-  ```
-  若能取得 JSON lines 串流或回應，代表模型可用。 4. 若模型僅輸出「thinking」字串或 chain-of-thought，而非最後的 `response` 欄位（常見於自定義模型），請改用常見的回應型模型（例如：`llama3.1:8b`）或確保自定義模型會傳回最終 `response` 欄位。
-
-我們已將服務邏輯改為：
-
-- 先嘗試 `OLLAMA_MODEL_NAME`（或 `.env` 指定的模型）
-- 若模型回應缺少 `response` 欄位或根本無回應，將嘗試 `OLLAMA_MODEL_FALLBACKS` 清單中可用的模型（例如 `llama3.1:8b`），並會在必要時自動切換為能輸出最終回應的模型。
+- Python 3.12+
+- Ollama (本地 LLM 服務)
+- CUDA
 
 ### 安裝步驟
 
-```powershell
-# 1. 克隆專案
-git clone <repository-url>
-cd psychology
+1. **clone 專案**
 
-# 2. 安裝依賴(不用uv)
-pip install -e .
-或
-pip install -r requirements.txt
+   ```bash
+   git clone <repository-url>
+   cd psychology
+   ```
 
-# 3. 設置環境變數
-# 複製範例檔案並編輯
-cp .env.example .env
-# 編輯 .env 檔案，加入你的 Google API Key
-echo "GOOGLE_API_KEY = your_gemini_api_key_here" > .env
-```
+2. **安裝依賴**
 
-### 啟動服務
+   ```bash
+   # 使用 pip 安裝所需套件
+   pip install -r requirements.txt
 
-```powershell
-# 開發模式（自動重載）
-cd app
-uvicorn main:app --reload --host 0.0.0.0 --port 8081
-```
+   # 或使用 uv
+   uv sync
+   ```
 
-## 📚 API 文檔
+3. **配置 Ollama**
 
-### 基本資訊
+   ```bash
+   # 安裝並啟動 Ollama
+   ollama serve
 
-- **基礎 URL**: `http://localhost:8081`
-- **API 文檔**: `http://localhost:8081/docs`（Swagger UI）
-- **ReDoc 文檔**: `http://localhost:8081/redoc`
+   # 下載模型
+   ollama pull llama3.1:8b
+   ```
 
-### 主要端點
+4. **配置環境**
+   編輯 `app/config.py` 設定 Ollama 服務地址：
 
-#### 1. 開始問卷
+   ```python
+   OLLAMA_API_URL = "http://localhost:11434"
+   OLLAMA_MODEL_NAME = "llama3.1:8b"
+   ```
 
-```http
-POST /questionnaire/start
-```
+   或使用 `.env` 文件：
 
-**回應**:
+   ```
+   OLLAMA_API_URL="http://localhost:11434"
+   OLLAMA_MODEL_NAME="llama3.1:8b"
+   ```
 
-```json
-{
-  "session_id": "uuid-string",
-  "question": "當股市短期暴跌 10% 時，您通常會怎麼做？ 冷靜觀望 / 想立刻賣出 / 加碼買進",
-  "question_number": 1,
-  "total_questions": 4
-}
-```
+5. **啟動服務**
 
-#### 2. 提交回答
+   ```bash
+   cd app
+   uvicorn main:app --reload --host 0.0.0.0 --port 8000
+   ```
 
-```http
-POST /questionnaire/answer
-```
+## API 端點
 
-**請求體**:
+### 核心功能
 
-```json
-{
-  "session_id": "uuid-string",
-  "answer": "冷靜觀望"
-}
-```
+- `POST /questionnaire/start` - 開始問卷
+- `POST /questionnaire/answer` - 提交答案
+- `POST /questionnaire/stream-question` - 串流生成問題
+- `POST /questionnaire/save-question` - 儲存問題與答案
 
-**回應**（還有下一題）:
+### 系統端點
 
-```json
-{
-  "has_next_question": true,
-  "question": "在投資時，您多久會感到焦慮？請以 1 到 5 評分（1=從不，5=非常常）",
-  "question_number": 2,
-  "total_questions": 4
-}
-```
-
-**回應**（問卷完成）:
-
-```json
-{
-  "has_next_question": false,
-  "advice": "根據您的投資心理分析...",
-  "profile": {
-    "risk": 65,
-    "stability": 72,
-    "confidence": 58,
-    "patience": 80,
-    "sensitivity": 45
-  },
-  "investor_type": "冷靜型（理性決策）",
-  "analysis": {
-    "stress_index": 35,
-    "time_horizon": 70,
-    "radar": {
-      "risk": 65,
-      "stability": 72,
-      "confidence": 58,
-      "impulsivity": 20,
-      "sensitivity": 45,
-      "time_horizon": 70,
-      "stress": 35
-    },
-    "advice": "具體的行動建議..."
-  }
-}
-```
-
-#### 3. 串流顯示問題
-
-```http
-POST /questionnaire/stream-question
-```
-
-**請求體**:
-
-```json
-{
-  "session_id": "uuid-string"
-}
-```
-
-**回應**: Server-Sent Events 串流格式
-
-#### 4. 其他端點
-
-- `POST /questionnaire/save-question` - 儲存問題回答
-- `GET /health` - 健康檢查
 - `GET /` - 服務資訊
+- `GET /health` - 健康檢查
 
-## 🔄 系統流程
+## 分析維度
 
-```mermaid
-graph TD
-    A[用戶開始問卷] --> B[創建會話 & 生成第一題]
-    B --> C[串流顯示問題]
-    C --> D[用戶回答問題]
-    D --> E[情緒分析 FinBERT]
-    E --> F[儲存回答與分析結果]
-    F --> G{是否完成所有問題?}
-    G -->|否| H[根據回答歷史生成下一題]
-    H --> C
-    G -->|是| I[計算心理畫像]
-    I --> J[投資者類型分類]
-    J --> K[生成個人化建議]
-    K --> L[回傳完整結果]
-```
+系統會從以下六個維度分析用戶心理特徵：
 
-## 🎯 投資者類型分類
+1. **情緒 (Emotion)** - 情緒穩定性與反應模式
+2. **壓力 (Stress)** - 壓力承受能力與應對方式
+3. **風險 (Risk)** - 風險偏好與容忍度
+4. **決策 (Decision)** - 決策風格與衝動控制
+5. **時間 (Time)** - 投資時間偏好
+6. **一般 (General)** - 綜合心理特徵
 
-系統會根據用戶的心理畫像自動分類為以下五種投資者類型：
+## 投資者類型
 
-- **波動型**：情緒受市場影響，風險偏好高但穩定性低
-- **探險型**：高風險偏好且心理穩定，敢於嘗試新投資
-- **冷靜型**：理性決策，風險偏好低但穩定性高
-- **謹慎型**：保守穩健，風險偏好和穩定性都較低
-- **綜合型**：各項指標平衡，投資風格中庸
+基於分析結果，系統會將用戶分類為：
 
-## 📊 心理畫像維度
-
-系統會為每位用戶生成五個維度的評分（0-100 分）：
-
-- **風險偏好**：對投資風險的接受程度
-- **穩定性**：面對市場波動時的心理穩定度
-- **信心**：對自己投資決策的信心程度
-- **耐心**：長期持有投資的耐心程度
-- **敏感度**：對市場變化的敏感反應程度
-
-## ⚙️ 配置說明
-
-### 問卷配置（config.py）
-
-- **總問題數**: `TOTAL_QUESTIONS = 4`（可調整）
-- **題型輪替**: 情緒反應 → 壓力感知 → 風險偏好 → 決策習慣
-- **串流延遲**: `STREAM_DELAY = 0.03`（字元間隔時間）
-
-### Gemini AI 配置
-
-- **模型**: `gemini-2.0-flash`
-- **問題生成溫度**: `0.8`（控制創造性）
-- **建議生成溫度**: `0.7`（控制建議品質）
-- **最大輸出**: 問題 150 tokens，建議 1024 tokens
-
-### 分析模型配置
-
-- **情緒分析**: ProsusAI/finbert（金融領域專用）
-- **上下文分析**: 支援問題+回答聯合分析
-- **設備支援**: 自動檢測並使用 GPU 加速（device=0）
-- **翻譯服務**: 中文自動翻譯為英文進行分析
-
-## 🛠️ 開發與測試
-
-### API 測試
-
-```bash
-# 測試健康檢查
-curl http://localhost:8000/health
-
-# 開始問卷
-curl -X POST "http://localhost:8000/questionnaire/start" \
-     -H "Content-Type: application/json"
-
-# 提交回答
-curl -X POST "http://localhost:8000/questionnaire/answer" \
-     -H "Content-Type: application/json" \
-     -d '{"session_id":"your-session-id","answer":"冷靜觀望"}'
-
-# 查看 API 文檔
-# 瀏覽器開啟: http://localhost:8000/docs
-```
-
-## 📝 開發建議
-
-1. **單元測試**: 為各服務模組編寫測試案例
-2. **資料庫整合**: 將會話資料持久化（Redis/PostgreSQL）
-3. **前端整合**: 開發 React/Vue 前端介面
-4. **監控系統**: 添加 API 監控和效能追蹤
-5. **快取機制**: 實作模型預測結果快取
-6. **API 限流**: 防止 Gemini API 配額濫用
-7. **日誌系統**: 完善錯誤處理和日誌記錄
-
-## ❓ 常見問題
-
-### Q: 模型載入時間很長？
-
-A: 首次載入需要下載 FinBERT 模型檔案（約 400MB），建議使用 GPU 加速。載入成功會顯示「✅ 分析模型載入成功」。
-
-### Q: Gemini API 調用失敗？
-
-A: 檢查 `.env` 檔案中的 `GOOGLE_API_KEY` 是否正確設定。沒有 API Key 時會使用 fallback 問題。
-
-### Q: 如何調整問卷題數？
-
-A: 修改 `config.py` 中的 `TOTAL_QUESTIONS` 參數即可。
-
-### Q: 投資者分類演算法？
-
-A: 基於風險偏好和穩定性兩個主要維度，結合其他心理特徵進行分類。
-
-## 🛠️ 本次優化 (Changelog)
-
-- 改善 `GeminiService`：從同步 `requests` 改為非同步 `httpx.AsyncClient`，避免阻塞事件循環。
-- `GeminiService` 現在使用 async `init()` 進行健康檢查，並在 `main` 啟動時初始化。
-- `utils/Translate.py`：延遲載入與快取 pipeline，避免對 Transformers 模型重複載入。
-- 推遲模型載入：`models/__init__` 改為延遲（lazy）初始化 `SentimentModel`，減少 import 時的延遲。
-- 切換 `print()` 為標準 `logging`，更適合生產環境的日誌管理。
-- 修正動態題目生成中的 UnboundLocalError（`question` 變數）與其他錯誤處理。
-- 新增基本單元測試：`test/test_translate.py`, `test/test_gemini_service.py`。
-
-如果你想回滾或需要更多優化（例如：將 `SentimentModel` 轉為推論 API、緩存模型預測、或替換更輕量級模型），我可以接著實作。
+- **保守型投資者** - 風險厭惡，偏好穩定收益
+- **平衡型投資者** - 風險中性，追求平衡配置
+- **積極型投資者** - 風險偏好，追求高收益

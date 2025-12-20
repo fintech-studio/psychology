@@ -7,7 +7,7 @@ TOTAL_QUESTIONS = 8  # 問題總數，可以調整為任意數量
 STREAM_DELAY = 0.03  # 字元間隔時間（秒）
 
 # Ollama local deployment settings
-OLLAMA_API_URL = "http://172.25.1.24:11434"  # default ollama local API address
+OLLAMA_API_URL = "http://localhost:11434"  # default ollama local API address
 OLLAMA_MODEL_NAME = "llama3.1:8b"  # please set to your local model name
 OLLAMA_ADVICE_TEMPERATURE = 0.7
 OLLAMA_ADVICE_MAX_TOKENS = 4096
